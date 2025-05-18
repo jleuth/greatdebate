@@ -30,6 +30,13 @@ type VoteParams = {
     models: string[];
 };
 
+type EndDebateParams = {
+    debateId: string;
+    topic?: string;
+    models?: string[];
+    maxTurns?: number;
+  };
+
 export async function startDebate({ topic, models, maxTurns = 40 }: StartDebateParams) {
     // This function sets up debate and calls runDebate to sustain the debate
 
@@ -223,6 +230,29 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
 export async function vote({ debateId, topic, models }: VoteParams) {
     // Handle the voting process, this func calls the vote turn, not runDebate.
 
+    // Check if the debate is still running, if not, return, if it is, update the status to voting
+    const { data: debate, error: debateError } = await supabaseAdmin
+        .from("debates")
+        .select("*")
+        .eq("id", debateId)
+        .single();
+    if (debateError) {
+        console.error("Error fetching debate:", debateError);
+        throw new Error("Failed to fetch debate");
+    }
+    if (debate.status !== "running") {
+        console.error("Debate is not running, cannot vote");
+        throw new Error("Debate is not running");
+    }
+    // Update the debate status to voting
+    await supabaseAdmin
+        .from("debates")
+        .update({
+            status: "voting",
+        })
+        .eq("id", debateId);
+        
+
     // Get all turns and create transcript
     const { data: turns, error: turnsError } = await supabaseAdmin
         .from("debate_turns")
@@ -318,6 +348,8 @@ export async function vote({ debateId, topic, models }: VoteParams) {
         };
 }
 
-export function endDebate({ debateId }: { debateId: string }) {
+export async function endDebate({ debateId, topic, models }: EndDebateParams) {
     // Finishes up debate, calls vote to have the models vote, then logs the results and ends the debate
+
+
 }
