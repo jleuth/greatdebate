@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "./supabaseAdmin";
 import { openrouterStream } from "./openRouter";
 import { start } from "repl";
+import { constructPrompt } from "./constructPrompt";
 
 type StartDebateParams = {
     topic: string;
@@ -13,6 +14,15 @@ type RunDebateParams = {
   topic: string;
   models: any[];
   maxTurns: number;
+};
+
+type TurnHandlerParams = {
+    debateId: string;
+    modelName: string;
+    turnIndex: number;
+    topic: string;
+    turns: any[];
+    messages: string;
 };
 
 export async function startDebate({ topic, models, maxTurns = 40 }: StartDebateParams) {
@@ -64,21 +74,74 @@ export async function startDebate({ topic, models, maxTurns = 40 }: StartDebateP
 
 export default async function runDebate({ debateId, topic, models, maxTurns }: RunDebateParams) {
     // Keep the debate going until maxTurns is reached, does most of the heavy lifting. This calls all the other functions
+    let keepGoing = true;
+    const systemPrompt = "You are a helpful AI assistant participating in a debate."; 
+
+    while(keepGoing) {
+        // Get all turns so far
+        const { data: turns, error: turnsError } = await supabaseAdmin
+            .from("debate_turns")
+            .select("*")
+            .eq("debate_id", debateId)
+            .order("turn_index", { ascending: true });
+
+        if (turnsError) {
+            console.error("Error fetching turns:", turnsError);
+            break;
+        }
+
+        // Check if we've reached the max turns
+        if (turns.length >= maxTurns) {
+            keepGoing = false;
+            await endDebate({ debateId });
+            break;
+        }
+
+        // Get the current turn index
+        const turnIndex = turns.length;
+        const modelName = models[turnIndex % models.length];
+
+        // Construct next prompt
+        const prompt = constructPrompt({
+            topic,
+            turns,
+            systemPrompt,
+            nextModelName: modelName
+        });
+
+        // Execute this turn
+        try {
+            await turnHandler({
+                debateId,
+                modelName,
+                turnIndex,
+                topic,
+                turns,
+                messages: prompt,
+            });
+        } catch (error) {
+            console.error("Error in turnHandler:", error);
+            break;
+        }
+
+
+    }
 }
 
 
 
-export function turnHandler() {
+
+export async function turnHandler({ debateId, modelName, turnIndex, topic, turns, messages }: TurnHandlerParams) {
     // Keep track of whos turn it is and calls the model to get a response
-
+    
 }
+
 
 export function vote() {
     // Handle the voting process, this func calls the vote turn, not runDebate.
 
 }
 
-export function endDebate() {
+export function endDebate({ debateId }: { debateId: string }) {
     // Finishes up debate, calls vote to have the models vote, then logs the results and ends the debate
 }
-
