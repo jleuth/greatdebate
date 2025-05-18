@@ -56,6 +56,24 @@ export async function startDebate({ topic, models, maxTurns = 40 }: StartDebateP
             throw new Error("Failed to create debate");
         }
 
+    // Send a message to the live chat from system saying a new debate has started
+    const { error: messageError } = await supabaseAdmin
+        .from("debate_turns")
+        .insert({
+            debate_id: debate.id,
+            model: "system",
+            turn_index: -1,
+            content: `A new debate has started on the topic: "${topic}" with models: ${models.join(", ")}.`,
+            tokens: 0,
+            ttft_ms: null,
+            started_at: new Date().toISOString(),
+            finished_at: null,
+        });
+    if (messageError) {
+        console.error("Error sending system message:", messageError);
+        throw new Error("Failed to send system message");
+    }
+
     // 2. Call runDebate to start the debate
     try {
         await runDebate({
@@ -97,7 +115,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
         }
 
         // Check if we've reached the max turns
-        if (turns.length = maxTurns) {
+        if (turns.length === maxTurns) {
             keepGoing = false;
             await vote({ debateId, topic, models });
             break;
@@ -286,7 +304,7 @@ export async function vote({ debateId, topic, models }: VoteParams) {
                     .from("debate_votes")
                     .insert({
                         debate_id: debateId,
-                        voter_model: models,
+                        voter_model: model,
                         vote_for: votesFor,
                         created_at: new Date().toISOString()
                     });
