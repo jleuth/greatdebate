@@ -1,7 +1,6 @@
 import { supabaseAdmin } from "./supabaseAdmin";
 import { openrouterStream } from "./openRouter";
-import { start } from "repl";
-import { constructPrompt } from "./constructPrompt";
+import { constructPrompt, constructVotingPrompt } from "./constructPrompt";
 
 type StartDebateParams = {
     topic: string;
@@ -23,6 +22,12 @@ type TurnHandlerParams = {
     topic: string;
     turns: any[];
     messages: string;
+};
+
+type VoteParams = {
+    debateId: string;
+    topic: string;
+    models: string[];
 };
 
 export async function startDebate({ topic, models, maxTurns = 40 }: StartDebateParams) {
@@ -215,9 +220,102 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
         };
 }
 
-export function vote() {
+export async function vote({ debateId, topic, models }: VoteParams) {
     // Handle the voting process, this func calls the vote turn, not runDebate.
 
+    // Get all turns and create transcript
+    const { data: turns, error: turnsError } = await supabaseAdmin
+        .from("debate_turns")
+        .select("*")
+        .eq("debate_id", debateId)
+        .order("turn_index", { ascending: true });
+    if (turnsError) {
+        console.error("Error fetching turns:", turnsError);
+        throw new Error("Failed to fetch turns");
+    }
+
+    const votes: Record<string, string> = {};
+
+        // For each model, have them vote
+        for (const model of models) {
+            const prompt = constructVotingPrompt({
+                topic,
+                turns,
+                models,
+            });
+
+            let votesFor = null;
+
+            try {
+                let output = "";
+                for await (const chunk of openrouterStream({ model, messages: [prompt] })) {
+                    output += chunk;
+                }
+
+                // Parse the output to get the vote
+                votesFor = models.find(m => 
+                    output.trim().toLowerCase().includes(m.toLowerCase())
+                ) || output.trim();
+
+                // Store the vote
+                await supabaseAdmin
+                    .from("debate_votes")
+                    .insert({
+                        debate_id: debateId,
+                        voter_model: models,
+                        vote_for: votesFor,
+                        created_at: new Date().toISOString()
+                    });
+
+                votes[model] = votesFor;
+                
+            } catch (error) {
+                console.error(`Error in voting process for model ${models}:`, error);
+                votes[model] = "Error";
+        }
+    }
+
+    // Tally the votes and find winner
+    const tally: Record<string, number> = {};
+    for (const v of Object.values(votes)) {
+        if (!models.includes(v)) {
+            console.error(`Invalid vote for model ${v}`);
+            continue;
+        }
+
+        tally[v] = (tally[v] || 0) + 1;
+    }
+
+    // Find the model with the most votes
+    let winner = null;
+    let maxVotes = 0;
+    for (const [model, count] of Object.entries(tally)) {
+        if (count > maxVotes) {
+            maxVotes = count;
+            winner = model;
+        }
+    }
+    if (!winner) {
+        console.error("No winner found in voting process");
+        throw new Error("No winner found");
+    }
+
+    // Update the debate with the winner
+    await supabaseAdmin
+        .from("debates")
+        .update({
+            winner,
+            status: "ended",
+            ended_at: new Date().toISOString(),
+        })
+        .eq("id", debateId);
+
+        // Return the winner
+        return {
+            winner,
+            votes,
+            tally,
+        };
 }
 
 export function endDebate({ debateId }: { debateId: string }) {
