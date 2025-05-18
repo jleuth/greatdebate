@@ -30,12 +30,6 @@ type VoteParams = {
     models: string[];
 };
 
-type EndDebateParams = {
-    debateId: string;
-    topic?: string;
-    models?: string[];
-    maxTurns?: number;
-  };
 
 export async function startDebate({ topic, models, maxTurns = 40 }: StartDebateParams) {
     // This function sets up debate and calls runDebate to sustain the debate
@@ -103,9 +97,9 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
         }
 
         // Check if we've reached the max turns
-        if (turns.length >= maxTurns) {
+        if (turns.length = maxTurns) {
             keepGoing = false;
-            await endDebate({ debateId });
+            await vote({ debateId, topic, models });
             break;
         }
 
@@ -251,7 +245,7 @@ export async function vote({ debateId, topic, models }: VoteParams) {
             status: "voting",
         })
         .eq("id", debateId);
-        
+
 
     // Get all turns and create transcript
     const { data: turns, error: turnsError } = await supabaseAdmin
@@ -348,8 +342,3 @@ export async function vote({ debateId, topic, models }: VoteParams) {
         };
 }
 
-export async function endDebate({ debateId, topic, models }: EndDebateParams) {
-    // Finishes up debate, calls vote to have the models vote, then logs the results and ends the debate
-
-
-}
