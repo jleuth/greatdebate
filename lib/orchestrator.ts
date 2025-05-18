@@ -129,13 +129,91 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
 }
 
 
-
-
 export async function turnHandler({ debateId, modelName, turnIndex, topic, turns, messages }: TurnHandlerParams) {
     // Keep track of whos turn it is and calls the model to get a response
     
-}
+    // make a new turn in the database with empty content
+    const { data: newTurn, error: newTurnError } = await supabaseAdmin
+        .from("debate_turns")
+        .insert({
+            debate_id: debateId,
+            model: modelName,
+            turn_index: turnIndex,
+            content: "",
+            tokens: 0,
+            ttft_ms: null,
+            started_at: new Date().toISOString(),
+            finished_at: null,
+        })
+        .select()
+        .single();
 
+    if (newTurnError) {
+        console.error("Error creating new turn:", newTurnError);
+        throw new Error("Failed to create new turn");
+    }
+
+    // Call model and stream fron openrouter
+    let content = "";
+    let tokens = 0;
+    let ttft_ms: number | null = null;
+    const startedAt = Date.now();
+
+        try{
+            let firstToken = true;
+            for await (const token of openrouterStream({ model: modelName, messages: [messages] })) {
+                if (firstToken) {
+                    ttft_ms = Date.now() - startedAt;
+                    firstToken = false;
+                }
+                content += token;
+                tokens ++;
+
+                // Batch DB updates every 5 tokens to reduce load
+                if (tokens === 1 || tokens % 5 === 0) {
+                    await supabaseAdmin
+                        .from("debate_turns")
+                        .update({
+                            content,
+                            tokens,
+                            ttft_ms,
+                        })
+                        .eq("id", newTurn.id);
+            }
+        }
+    } catch (error:any) {
+        console.error("Error streaming tokens:", error);
+
+        // Log error in the database
+        await supabaseAdmin
+            .from("debate_turns")
+            .update({
+                error: error.message,
+                finished_at: new Date().toISOString(),
+            })
+
+    }
+    
+    // Finish up turn, update statistics and set finished_at
+    await supabaseAdmin
+        .from("debate_turns")
+        .update({
+            content,
+            tokens,
+            ttft_ms,
+            finished_at: new Date().toISOString(),
+        })
+        .eq("id", newTurn.id);
+
+        // Final return
+        return {
+            turnId: newTurn.id,
+            content,
+            tokens,
+            ttft_ms,
+            finishedAt: new Date().toISOString(),
+        };
+}
 
 export function vote() {
     // Handle the voting process, this func calls the vote turn, not runDebate.
