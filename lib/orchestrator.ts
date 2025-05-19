@@ -5,7 +5,8 @@ import { constructPrompt, constructVotingPrompt } from "./constructPrompt";
 type StartDebateParams = {
     topic: string;
     models: string[];
-    maxTurns: number;
+    maxTurns?: number;
+    category: string;
 };
 
 type RunDebateParams = {
@@ -31,7 +32,7 @@ type VoteParams = {
 };
 
 
-export async function startDebate({ topic, models, maxTurns = 40 }: StartDebateParams) {
+export async function startDebate({ topic, models, category, maxTurns = 40 }: StartDebateParams) {
     // This function sets up debate and calls runDebate to sustain the debate
 
     // 1. Create a new debate in the database
@@ -47,6 +48,7 @@ export async function startDebate({ topic, models, maxTurns = 40 }: StartDebateP
             current_model: models[0],
             status: "running",
             started_at: new Date().toISOString(),
+            category,
         })
         .select()
         .single();
@@ -63,7 +65,7 @@ export async function startDebate({ topic, models, maxTurns = 40 }: StartDebateP
             debate_id: debate.id,
             model: "system",
             turn_index: -1,
-            content: `A new debate has started on the topic: "${topic}" with models: ${models.join(", ")}.`,
+            content: `A new debate has started on the topic: "${topic}" with models: ${models.join(", ")}. The category of models in play is ${category}.`,
             tokens: 0,
             ttft_ms: null,
             started_at: new Date().toISOString(),

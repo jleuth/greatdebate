@@ -9,8 +9,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    const { topic, models, maxTurns } = await req.json();
-    if (!topic || !models || !maxTurns || models.length !== 4 || !Array.isArray(models)) {
+    const { topic, models, category } = await req.json();
+    if (!topic || !models || !category || models.length !== 4 || !Array.isArray(models)) {
         return NextResponse.json({ message: 'Invalid payload' }, { status: 400 });
     }
 
@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
        const debate = await startDebate({
             topic,
             models,
-            maxTurns,
+            category,
         });
         
         return NextResponse.json( debate, { status: 201 });
