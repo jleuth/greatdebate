@@ -15,7 +15,7 @@ export function constructPrompt({ topic, turns, systemPrompt, nextModelName }: C
     const debateHistory = turns
         .slice(-10) // Get the last 10 turns
         .map(turn => `${turn.model_name}: ${turn.message}`)
-        .join("\\n");
+        .join("\n");
 
     const prompt = `
 System Prompt: ${systemPrompt}
