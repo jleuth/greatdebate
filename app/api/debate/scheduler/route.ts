@@ -16,13 +16,14 @@ export async function POST(req: NextRequest) {
         .select('status');
 
     if (error) {
+        console.error('Error fetching debates:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
     const hasNonEnded = debates?.some((debate: { status: string }) => debate.status !== 'ended');
 
     if (hasNonEnded) {
-        return NextResponse.json({ message: 'There are debates that have not ended.' }, { status: 200 });
+        return NextResponse.json({ message: 'There are debates that have not ended.' }, { status: 204 });
     }
 
     // Define pools of categories, each with their own models and topics
@@ -36,28 +37,28 @@ export async function POST(req: NextRequest) {
             ],
         },
         'Reasoning Round': {
-            models: ['Llama-3', 'Qwen-2', 'Yi-34B', 'GPT-4.1', 'Claude 3 Opus'],
+            models: [ 'openai/o3', 'google/gemini-2.5-pro-preview', 'deepseek/deepseek-r1:free', 'perplexity/r1-1776', 'anthropic/claude-3.7-sonnet:thinking', 'x-ai/grok-3-beta', 'openai/o1', 'qwen/qwq-32b:free', 'microsoft/phi-4-reasoning-plus:free', 'openai/o4-mini-high'],
             topics: [
                 'Will open source or closed source AI dominate the future?',
                 'Are open source models safer than closed source models?',
             ],
         },
         'SLM Smackdown': {
-            models: ['Llama-3', 'Qwen-2', 'Yi-34B', 'GPT-4.1', 'Claude 3 Opus'],
+            models: ['openai/gpt-4.1-nano', 'google/gemma-3-4b-it:free', 'google/gemini-2.0-flash-lite-001', 'mistralai/ministral-3b', 'meta-llama/llama-3.2-3b-instruct', 'amazon/nova-lite-v1', 'qwen/qwen3-4b:free'],
             topics: [
                 'Which model is the best for reasoning tasks?',
                 'Which model is the best for creative writing?',
             ],
         },
         'Open Source Showdown': {
-            models: ['Llama-3', 'Qwen-2', 'Yi-34B', 'GPT-4.1', 'Claude 3 Opus'],
+            models: ['meta-llama/llama-4-maverick:free', 'nvidia/llama-3.1-nemotron-ultra-253b-v1:free', 'google/gemma-3-27b-it:free', 'microsoft/phi-4-multimodal-instruct', 'qwen/qwen3-235b-a22b:free', 'deepseek/deepseek-chat:free', 'mistralai/mistral-medium-3', ],
             topics: [
                 'Which open source model is the best for reasoning tasks?',
                 'Which open source model is the best for creative writing?',
             ],
         },
         'Popularity Contest': {
-            models: ['Llama-3', 'Qwen-2', 'Yi-34B', 'GPT-4.1', 'Claude 3 Opus'],
+            models: ['meta-llama/llama-4-maverick:free', 'openai/gpt-4.1', 'openai/chatgpt-4o-latest', 'google/gemini-2.5-flash-preview', 'anthropic/claude-3.7-sonnet', 'qwen/qwen3-235b-a22b:free'],
             topics: [
                 'Which model is the most popular among users?',
                 'Which model has the best community support?',
@@ -103,7 +104,13 @@ export async function POST(req: NextRequest) {
 
     const debateSelection = pickDebateFromPools();
 
-    fetch('/api/debate/start', {
+    console.log('Picked Debate:', {
+        category: debateSelection.category,
+        topic: debateSelection.topic,
+        models: debateSelection.models,
+    });
+
+    fetch('http://localhost:3000/api/debate/start', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
