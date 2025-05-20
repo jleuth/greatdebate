@@ -42,6 +42,20 @@ function sanitizeContent(content: string, list: string[]): string {
   return sanitized
 }
 
+// Function to generate a UUID or a fallback
+function generateUUID() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  } else {
+    // Basic fallback for older browsers
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      var r = (Math.random() * 16) | 0,
+        v = c == 'x' ? r : (r & 0x3 | 0x8)
+      return v.toString(16)
+    })
+  }
+}
+
 export function useRealtimeChat({ roomName, username }: UseRealtimeChatProps) {
   const supabase = createClient()
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -107,7 +121,7 @@ export function useRealtimeChat({ roomName, username }: UseRealtimeChatProps) {
       }
 
       const message: ChatMessage = {
-        id: crypto.randomUUID(),
+        id: generateUUID(), // Use the new UUID generator function
         content, // Content is already checked
         user: {
           name: username,
