@@ -3,38 +3,33 @@
 import AIChat from "@/components/ux/aichat";
 import Status from "@/components/ux/status";
 import UserChat from "@/components/ux/userchat";
-import { createClient } from '@supabase/supabase-js';
+import GlobalAlertBanner from "@/components/ux/globalalertbanner";
 import { useEffect, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
-
-
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 export default function Home() {
-
-  useEffect(() => {
-    // Fetch current flags row(s) on mount
-    supabase
-      .from('flags')
-      .select('*')
-      .single() // or .maybeSingle() if only one row; .then(res => res.data)
-      .then(({ data, error }) => {
-        if (data) setFlags(data);
-        else if (error) console.error(error);
-      });
   
+  const [flags, setFlags] = useState<{ [key: string]: any }>({});
+  
+  useEffect(() => {
+    // 1. Get current flags
+    supabase.from('flags').select('*').single().then(({ data }) => {
+      if (data) setFlags(data);
+    });
+  
+    // 2. Subscribe for updates
     const channel = supabase
       .channel('global-flags')
       .on(
         'postgres_changes',
-        {
-          event: '*', // 'UPDATE', 'INSERT', 'DELETE'
-          schema: 'public',
-          table: 'flags',
-        },
+        { event: '*', schema: 'public', table: 'flags' },
         (payload) => {
-        setFlags(payload.new);
-
+          if (payload.new) setFlags(payload.new);
         }
       )
       .subscribe();
@@ -43,25 +38,25 @@ export default function Home() {
   }, []);
   
 
-  const [flags, setFlags] = useState<{ [key: string]: any }>({});
-
-  console.log("Flags: ", flags);
 
   const currentUsername = "";
 
+
   return (
-    <main className="p-5 flex space-x-5">
-      <div className="w-1/2">
-        <AIChat/>
+    <div>
+      <div className='p-5'>
+          <GlobalAlertBanner alert={flags.global_alerts} />
       </div>
-      <div className="w-1/2 flex flex-col gap-4">
-        <Status />
-        {flags.enable_user_chat === true ? (
+
+      <main className="p-5 flex space-x-5">
+        <div className="w-1/2">
+          <AIChat/>
+        </div>
+        <div className="w-1/2 flex flex-col gap-4">
+          <Status />
           <UserChat roomName="great-debate-room" username={currentUsername} />
-        ) : (
-          <div>User chat is currently disabled.</div>
-        )}
-      </div>
-    </main>
+        </div>
+      </main>
+    </div>
   );
 }

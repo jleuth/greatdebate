@@ -35,13 +35,14 @@ export async function POST(req: NextRequest) {
         .select('status');
 
     if (error) {
+        console.error('Error fetching debates:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
     const hasNonEnded = debates?.some((debate: { status: string }) => debate.status === 'running');
 
     if (hasNonEnded) {
-        return NextResponse.json({ message: 'There are debates that have not ended.' }, { status: 200 });
+        return NextResponse.json({ message: 'There are debates that have not ended.' }, { status: 204 });
     }
 
     // Define pools of categories, each with their own models and topics
@@ -122,6 +123,7 @@ export async function POST(req: NextRequest) {
     }
 
     const debateSelection = pickDebateFromPools();
+
 
     // Log the selected debate configuration
     await Log({

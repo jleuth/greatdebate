@@ -20,7 +20,14 @@ const UserChat: React.FC<UserChatProps> = ({ roomName, username: initialUsername
     setInputUsername(initialUsername);
   }, [initialUsername]);
 
-  const { messages: messages } = usePastMessages({ roomName })
+  const { messages: messages, isLoading, error } = usePastMessages({ roomName })
+
+    if (isLoading) {
+      return <Card className="flex flex-col h-full items-center justify-center"><CardContent>Loading debate messages...</CardContent></Card>;
+    }
+    if (error) {
+      return <Card className="flex flex-col h-full items-center justify-center"><CardContent>Error loading debate messages.</CardContent></Card>;
+    }
 
   const handleMessage = async (messages: ChatMessage[]) => {
     if (messages.length > 0) {
@@ -28,6 +35,8 @@ const UserChat: React.FC<UserChatProps> = ({ roomName, username: initialUsername
       await storeMessages(messages, roomName); 
     }
   }
+
+  
 
   return (
     <Card className="flex flex-col h-full">

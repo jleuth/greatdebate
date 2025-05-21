@@ -10,12 +10,11 @@ interface AIChatProps {}
 const AIChat: React.FC<AIChatProps> = () => {
   const { messages, isLoading, error } = usePastAiMessages();
 
-  // Optional: Display loading and error states
   if (isLoading) {
-    // return <Card className="flex flex-col h-full items-center justify-center"><CardContent>Loading AI messages...</CardContent></Card>;
+    return <Card className="flex flex-col h-full items-center justify-center"><CardContent>Loading debate messages...</CardContent></Card>;
   }
   if (error) {
-    // return <Card className="flex flex-col h-full items-center justify-center"><CardContent>Error loading AI messages.</CardContent></Card>;
+    return <Card className="flex flex-col h-full items-center justify-center"><CardContent>Error loading debate messages.</CardContent></Card>;
   }
 
   return (
