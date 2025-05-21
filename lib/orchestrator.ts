@@ -196,7 +196,17 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 message: "Debate is paused, waiting to resume...",
             });
             // Sleep, then re-check flags
-            await new Promise(resolve => setTimeout(resolve, PAUSE_DELAY_MS));
+            while (flags?.debate_paused === true) {
+                await new Promise(resolve => setTimeout(resolve, PAUSE_DELAY_MS));
+            }
+
+            await Log({
+                level: "info",
+                event_type: "debate_resumed",
+                debate_id: debateId,
+                message: "Debate has resumed.",
+            });
+            
             continue;
         }
 
