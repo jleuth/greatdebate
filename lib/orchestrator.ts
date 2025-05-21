@@ -156,16 +156,11 @@ export async function startDebate({ topic, models, category, maxTurns = 40 }: St
 }
 
 export default async function runDebate({ debateId, topic, models, maxTurns }: RunDebateParams) {
-    // Keep the debate going until maxTurns is reached, does most of the heavy lifting. This calls all the other functions
-    let keepGoing = true;
-    const systemPrompt = "You are a helpful AI assistant participating in a debate."; 
+    const PAUSE_DELAY_MS = 10000; // 4s between pause checks, adjust as needed
 
-    while(keepGoing) {
-
-        // Check if the debate has been told to abort, pause, or killswitched
-
-                // CHECK FLAGS
-            const { data: flags, error: flagerror } = await supabaseAdmin
+    while (true) {
+        // --- 1. CHECK FLAGS ---
+        const { data: flags, error: flagerror } = await supabaseAdmin
             .from('flags')
             .select('kill_switch_active, debate_paused, should_abort')
             .single();
@@ -177,25 +172,35 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 message: "Error fetching flags",
                 detail: flagerror.message,
             });
-
+            // Can't safely continue, set error state.
+            await supabaseAdmin.from("debates").update({ status: "error" }).eq("id", debateId);
             return "Could not check flags";
         }
 
-        if (
-            (flags?.kill_switch_active === true) ||
-            (flags?.debate_paused === true) ||
-            (flags?.should_abort === false)
-        ) {
+        if (flags?.kill_switch_active === true || flags?.should_abort === true) {
             await Log({
                 level: "warn",
                 event_type: "flag_preventing_debate",
-                message: "A flag has stopped this debate.",
+                message: "A kill/abort flag has stopped this debate.",
             });
+            await supabaseAdmin.from("debates").update({ status: "aborted", ended_at: new Date().toISOString() }).eq("id", debateId);
             return "A flag has stopped this debate.";
         }
-        // END CHECK FLAGS
 
-        // Get all turns so far
+        // --- 2. HANDLE PAUSE ---
+        if (flags?.debate_paused === true) {
+            await Log({
+                level: "info",
+                event_type: "debate_paused",
+                debate_id: debateId,
+                message: "Debate is paused, waiting to resume...",
+            });
+            // Sleep, then re-check flags
+            await new Promise(resolve => setTimeout(resolve, PAUSE_DELAY_MS));
+            continue;
+        }
+
+        // --- 3. FETCH CURRENT TURNS ---
         const { data: turns, error: turnsError } = await supabaseAdmin
             .from("debate_turns")
             .select("*")
@@ -210,19 +215,14 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 message: "Error fetching turns",
                 detail: turnsError.message,
             });
-            await supabaseAdmin
-                .from("debates")
-                .update({ status: "error" })
-                .eq("id", debateId);
-            break;
+            await supabaseAdmin.from("debates").update({ status: "error" }).eq("id", debateId);
+            return "Failed to fetch turns";
         }
 
-        // Filter out system messages and get only the debate turns
         const nonSystemTurns = turns.filter(turn => turn.model !== "system");
 
-        // Check if we've reached the max turns
+        // --- 4. CHECK MAX TURNS ---
         if (nonSystemTurns.length >= maxTurns) {
-            keepGoing = false;
             await Log({
                 level: "info",
                 event_type: "debate_max_turns_reached",
@@ -231,6 +231,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             });
             try {
                 await vote({ debateId, topic, models });
+                await supabaseAdmin.from("debates").update({ status: "voting" }).eq("id", debateId);
             } catch (voteError) {
                 await Log({
                     level: "error",
@@ -239,23 +240,18 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                     message: "Error during voting",
                     detail: voteError instanceof Error ? voteError.message : String(voteError),
                 });
-                await supabaseAdmin
-                    .from("debates")
-                    .update({ status: "error" })
-                    .eq("id", debateId);
+                await supabaseAdmin.from("debates").update({ status: "error" }).eq("id", debateId);
             }
-            break;
+            return "Debate reached max turns, moved to voting.";
         }
 
-        // Get the current turn index
+        // --- 5. PREPARE TURN ---
         const turnIndex = nonSystemTurns.length;
         const modelIndex = turnIndex % models.length;
         const modelName = models[modelIndex];
 
-        // Assign a role/perspective to each model
         const modelRole = `You are ${modelName}, arguing from a specific perspective.`;
 
-        // Construct next prompt with adapted turn data
         const adaptedTurns = turns.map(turn => ({
             model_name: turn.model,
             message: turn.content,
@@ -265,21 +261,19 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
         const prompt = constructPrompt({
             topic,
             turns: adaptedTurns,
-            systemPrompt: modelRole, // Use model-specific role
+            systemPrompt: modelRole,
             nextModelName: modelName
         });
 
-        // Log turn start
         await Log({
             level: "info",
             event_type: "turn_start",
             debate_id: debateId,
             model: modelName,
             message: `Turn ${turnIndex} started for model ${modelName}`,
-            // turn_id will be available after turnHandler
         });
 
-        // Execute this turn
+        // --- 6. EXECUTE TURN ---
         try {
             const turnResult = await turnHandler({
                 debateId,
@@ -289,7 +283,6 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 turns,
                 messages: prompt,
             });
-            // Log turn end with all details (remove previous duplicate log)
             await Log({
                 level: "info",
                 event_type: "turn_end",
@@ -310,14 +303,12 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 message: `Error in turnHandler for turn ${turnIndex}`,
                 detail: error instanceof Error ? error.message : String(error),
             });
-            await supabaseAdmin
-                .from("debates")
-                .update({ status: "error" })
-                .eq("id", debateId);
-            break;
+            await supabaseAdmin.from("debates").update({ status: "error" }).eq("id", debateId);
+            return "Error running debate turn";
         }
     }
 }
+
 
 
 export async function turnHandler({ debateId, modelName, turnIndex, topic, turns, messages }: TurnHandlerParams) {
