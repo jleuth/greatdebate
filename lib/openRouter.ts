@@ -1,3 +1,5 @@
+import Log from "./logger";
+
 export async function* openrouterStream({
     model,
     messages,
@@ -17,6 +19,29 @@ export async function* openrouterStream({
         stream: true,
       }),
     });
+
+    // Log the response status and error if not ok
+    if (!response.ok) {
+      let errorMsg = '';
+      try {
+        errorMsg = await response.text();
+      } catch {}
+      await Log({
+        level: "error",
+        event_type: "openrouter_api_error",
+        model,
+        message: `OpenRouter API call failed (status ${response.status})`,
+        detail: errorMsg,
+      });
+      throw new Error(`OpenRouter API call failed: ${response.status} ${errorMsg}`);
+    } else {
+      await Log({
+        level: "info",
+        event_type: "openrouter_api_success",
+        model,
+        message: `OpenRouter API call succeeded (status ${response.status})`,
+      });
+    }
   
     const reader = response.body?.getReader();
     if (!reader) {
@@ -62,4 +87,3 @@ export async function* openrouterStream({
       reader.cancel();
     }
   }
-  

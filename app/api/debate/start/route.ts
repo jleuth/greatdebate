@@ -14,6 +14,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ message: 'Invalid payload' }, { status: 400 });
     }
 
+    
+
     // Start the debate
 
     try {

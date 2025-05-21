@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "./supabaseAdmin";
+import Log from "./logger";
 import { openrouterStream } from "./openRouter";
 import { constructPrompt, constructVotingPrompt } from "./constructPrompt";
 
@@ -54,9 +55,21 @@ export async function startDebate({ topic, models, category, maxTurns = 40 }: St
         .single();
 
         if (debateError) {
-            console.error("Error creating debate:", debateError);
+            await Log({
+                level: "error",
+                event_type: "debate_create_error",
+                message: "Error creating debate",
+                detail: debateError.message,
+            });
             throw new Error("Failed to create debate");
         }
+    await Log({
+        level: "info",
+        event_type: "debate_started",
+        debate_id: debate.id,
+        message: `Debate started on topic: ${topic}`,
+        detail: `Models: ${models.join(", ")}, Category: ${category}`,
+    });
 
     // Send a message to the live chat from system saying a new debate has started
     const { error: messageError } = await supabaseAdmin
@@ -64,7 +77,7 @@ export async function startDebate({ topic, models, category, maxTurns = 40 }: St
         .insert({
             debate_id: debate.id,
             model: "system",
-            turn_index: -1,
+            turn_index: 0,
             content: `A new debate has started on the topic: "${topic}" with models: ${models.join(", ")}. The category of models in play is ${category}.`,
             tokens: 0,
             ttft_ms: null,
@@ -72,7 +85,13 @@ export async function startDebate({ topic, models, category, maxTurns = 40 }: St
             finished_at: null,
         });
     if (messageError) {
-        console.error("Error sending system message:", messageError);
+        await Log({
+            level: "error",
+            event_type: "system_message_error",
+            debate_id: debate.id,
+            message: "Error sending system message",
+            detail: messageError.message,
+        });
         throw new Error("Failed to send system message");
     }
 
@@ -85,6 +104,13 @@ export async function startDebate({ topic, models, category, maxTurns = 40 }: St
             maxTurns,
         });
     } catch (error) {
+        await Log({
+            level: "error",
+            event_type: "debate_run_error",
+            debate_id: debate.id,
+            message: "Debate failed at runDebate",
+            detail: error instanceof Error ? error.message : String(error),
+        });
         console.error("Debate failed at runDebate:", error);
     }
 
@@ -112,32 +138,85 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             .order("turn_index", { ascending: true });
 
         if (turnsError) {
-            console.error("Error fetching turns:", turnsError);
+            await Log({
+                level: "error",
+                event_type: "turns_fetch_error",
+                debate_id: debateId,
+                message: "Error fetching turns",
+                detail: turnsError.message,
+            });
+            await supabaseAdmin
+                .from("debates")
+                .update({ status: "error" })
+                .eq("id", debateId);
             break;
         }
 
+        // Filter out system messages and get only the debate turns
+        const nonSystemTurns = turns.filter(turn => turn.model !== "system");
+
         // Check if we've reached the max turns
-        if (turns.length === maxTurns) {
+        if (nonSystemTurns.length >= maxTurns) {
             keepGoing = false;
-            await vote({ debateId, topic, models });
+            await Log({
+                level: "info",
+                event_type: "debate_max_turns_reached",
+                debate_id: debateId,
+                message: `Max turns (${maxTurns}) reached. Starting voting.`,
+            });
+            try {
+                await vote({ debateId, topic, models });
+            } catch (voteError) {
+                await Log({
+                    level: "error",
+                    event_type: "voting_error",
+                    debate_id: debateId,
+                    message: "Error during voting",
+                    detail: voteError instanceof Error ? voteError.message : String(voteError),
+                });
+                await supabaseAdmin
+                    .from("debates")
+                    .update({ status: "error" })
+                    .eq("id", debateId);
+            }
             break;
         }
 
         // Get the current turn index
-        const turnIndex = turns.length;
-        const modelName = models[turnIndex % models.length];
+        const turnIndex = nonSystemTurns.length;
+        const modelIndex = turnIndex % models.length;
+        const modelName = models[modelIndex];
 
-        // Construct next prompt
+        // Assign a role/perspective to each model
+        const modelRole = `You are ${modelName}, arguing from a specific perspective.`;
+
+        // Construct next prompt with adapted turn data
+        const adaptedTurns = turns.map(turn => ({
+            model_name: turn.model,
+            message: turn.content,
+            turn_index: turn.turn_index
+        }));
+
         const prompt = constructPrompt({
             topic,
-            turns,
-            systemPrompt,
+            turns: adaptedTurns,
+            systemPrompt: modelRole, // Use model-specific role
             nextModelName: modelName
+        });
+
+        // Log turn start
+        await Log({
+            level: "info",
+            event_type: "turn_start",
+            debate_id: debateId,
+            model: modelName,
+            message: `Turn ${turnIndex} started for model ${modelName}`,
+            // turn_id will be available after turnHandler
         });
 
         // Execute this turn
         try {
-            await turnHandler({
+            const turnResult = await turnHandler({
                 debateId,
                 modelName,
                 turnIndex,
@@ -145,12 +224,33 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 turns,
                 messages: prompt,
             });
+            // Log turn end with all details (remove previous duplicate log)
+            await Log({
+                level: "info",
+                event_type: "turn_end",
+                debate_id: debateId,
+                turn_id: turnResult?.turnId,
+                model: modelName,
+                message: `Turn ${turnIndex} ended for model ${modelName}`,
+                tokens: turnResult?.tokens,
+                latency_ms: turnResult?.ttft_ms ?? undefined,
+            });
         } catch (error) {
-            console.error("Error in turnHandler:", error);
+            await Log({
+                level: "error",
+                event_type: "turn_handler_error",
+                debate_id: debateId,
+                model: modelName,
+                turn_id: undefined,
+                message: `Error in turnHandler for turn ${turnIndex}`,
+                detail: error instanceof Error ? error.message : String(error),
+            });
+            await supabaseAdmin
+                .from("debates")
+                .update({ status: "error" })
+                .eq("id", debateId);
             break;
         }
-
-
     }
 }
 
@@ -173,63 +273,95 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
         })
         .select()
         .single();
-
     if (newTurnError) {
-        console.error("Error creating new turn:", newTurnError);
+        await Log({
+            level: "error",
+            event_type: "turn_create_error",
+            debate_id: debateId,
+            turn_id: undefined,
+            model: modelName,
+            message: `Error creating new turn for model ${modelName}`,
+            detail: newTurnError.message,
+        });
         throw new Error("Failed to create new turn");
     }
 
-    // Call model and stream fron openrouter
+    // Call model and stream from openrouter
     let content = "";
     let tokens = 0;
     let ttft_ms: number | null = null;
     const startedAt = Date.now();
 
-        try{
-            let firstToken = true;
-            for await (const token of openrouterStream({ model: modelName, messages: [messages] })) {
-                if (firstToken) {
-                    ttft_ms = Date.now() - startedAt;
-                    firstToken = false;
-                }
-                content += token;
-                tokens ++;
+    try {
+        let firstToken = true;
+        for await (const token of openrouterStream({ model: modelName, messages: [messages] })) {
+            if (firstToken) {
+                ttft_ms = Date.now() - startedAt;
+                firstToken = false;
+            }
+            content += token;
+            tokens++;
 
-                // Batch DB updates every 5 tokens to reduce load
-                if (tokens === 1 || tokens % 5 === 0) {
-                    await supabaseAdmin
-                        .from("debate_turns")
-                        .update({
-                            content,
-                            tokens,
-                            ttft_ms,
-                        })
-                        .eq("id", newTurn.id);
+            // Batch DB updates every 5 tokens to reduce load
+            if (tokens === 1 || tokens % 5 === 0) {
+                await supabaseAdmin
+                    .from("debate_turns")
+                    .update({
+                        content,
+                        tokens,
+                        ttft_ms,
+                    })
+                    .eq("id", newTurn.id);
             }
         }
-    } catch (error:any) {
-        console.error("Error streaming tokens:", error);
+    } catch (error: any) {
+        await Log({
+            level: "error",
+            event_type: "turn_stream_error",
+            debate_id: debateId,
+            turn_id: newTurn?.id,
+            model: modelName,
+            message: `Error streaming tokens for model ${modelName}`,
+            detail: error instanceof Error ? error.message : String(error),
+        });
 
-        // Log error in the database
-        await supabaseAdmin
-            .from("debate_turns")
-            .update({
-                error: error.message,
-                finished_at: new Date().toISOString(),
-            })
-
+        // Log error in the database, scoped to the specific turn
+        if (newTurn && newTurn.id) {
+            await supabaseAdmin
+                .from("debate_turns")
+                .update({
+                    error: error.message,
+                    finished_at: new Date().toISOString(),
+                })
+                .eq("id", newTurn.id);
+        }
+        
+        // Propagate the error to allow runDebate to handle it
+        throw error;
     }
     
     // Finish up turn, update statistics and set finished_at
-    await supabaseAdmin
-        .from("debate_turns")
-        .update({
-            content,
-            tokens,
-            ttft_ms,
-            finished_at: new Date().toISOString(),
-        })
-        .eq("id", newTurn.id);
+    // Ensure newTurn is defined before trying to access its id
+    if (newTurn && newTurn.id) {
+
+        await supabaseAdmin
+            .from("debate_turns")
+            .update({
+                content,
+                tokens,
+                ttft_ms,
+                finished_at: new Date().toISOString(),
+            })
+            .eq("id", newTurn.id);
+
+        // Update the debate's current turn index and model
+        await supabaseAdmin
+            .from("debates")
+            .update({
+                current_turn_idx: turnIndex,
+                current_model: modelName,
+            })
+            .eq("id", debateId);
 
         // Final return
         return {
@@ -239,6 +371,9 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
             ttft_ms,
             finishedAt: new Date().toISOString(),
         };
+    }
+    
+    throw new Error("Turn creation failed: newTurn is undefined");
 }
 
 export async function vote({ debateId, topic, models }: VoteParams) {
@@ -266,82 +401,139 @@ export async function vote({ debateId, topic, models }: VoteParams) {
         })
         .eq("id", debateId);
 
+    await Log({
+        level: "info",
+        event_type: "voting_started",
+        debate_id: debateId,
+        message: `Voting started for debate ${debateId}`,
+    });
 
-    // Get all turns and create transcript
+    // Get all turns and create transcript - exclude system messages for voting
     const { data: turns, error: turnsError } = await supabaseAdmin
         .from("debate_turns")
         .select("*")
         .eq("debate_id", debateId)
+        .neq("model", "system") // Filter out system messages
         .order("turn_index", { ascending: true });
     if (turnsError) {
         console.error("Error fetching turns:", turnsError);
         throw new Error("Failed to fetch turns");
     }
 
+    // Adapt turns for the voting prompt format
+    const adaptedTurns = turns.map(turn => ({
+        model_name: turn.model,
+        message: turn.content,
+        turn_index: turn.turn_index
+    }));
+
     const votes: Record<string, string> = {};
 
-        // For each model, have them vote
-        for (const model of models) {
-            const prompt = constructVotingPrompt({
-                topic,
-                turns,
-                models,
+    // For each model, have them vote
+    for (const model of models) {
+        const prompt = constructVotingPrompt({
+            topic,
+            turns: adaptedTurns,
+            models,
+        });
+
+        let votesFor = null;
+
+        try {
+            let output = "";
+            for await (const chunk of openrouterStream({ model, messages: prompt })) { // Use the complete prompt object
+                output += chunk;
+            }
+
+            // Parse the output to get the vote - validate against model list
+            votesFor = models.find(m => 
+                output.trim().toLowerCase().includes(m.toLowerCase())
+            );
+
+            // If we couldn't parse a valid model name, store the raw output for debugging
+            if (!votesFor) {
+                console.warn(`Model ${model} voted with an invalid output: "${output.trim()}""`);
+                votesFor = "invalid_vote";
+            }
+
+            // Store the vote
+            await supabaseAdmin
+                .from("debate_votes")
+                .insert({
+                    debate_id: debateId,
+                    voter_model: model,
+                    vote_for: votesFor,
+                    created_at: new Date().toISOString()
+                });
+
+            votes[model] = votesFor;
+            await Log({
+                level: "info",
+                event_type: "model_vote",
+                debate_id: debateId,
+                model,
+                message: `Model ${model} voted for ${votesFor}`,
             });
-
-            let votesFor = null;
-
-            try {
-                let output = "";
-                for await (const chunk of openrouterStream({ model, messages: [prompt] })) {
-                    output += chunk;
-                }
-
-                // Parse the output to get the vote
-                votesFor = models.find(m => 
-                    output.trim().toLowerCase().includes(m.toLowerCase())
-                ) || output.trim();
-
-                // Store the vote
-                await supabaseAdmin
-                    .from("debate_votes")
-                    .insert({
-                        debate_id: debateId,
-                        voter_model: model,
-                        vote_for: votesFor,
-                        created_at: new Date().toISOString()
-                    });
-
-                votes[model] = votesFor;
-                
-            } catch (error) {
-                console.error(`Error in voting process for model ${models}:`, error);
-                votes[model] = "Error";
+        } catch (error) {
+            await Log({
+                level: "error",
+                event_type: "model_vote_error",
+                debate_id: debateId,
+                model,
+                message: `Error in voting process for model ${model}`,
+                detail: error instanceof Error ? error.message : String(error),
+            });
+            votes[model] = "Error";
         }
     }
 
     // Tally the votes and find winner
     const tally: Record<string, number> = {};
-    for (const v of Object.values(votes)) {
-        if (!models.includes(v)) {
-            console.error(`Invalid vote for model ${v}`);
-            continue;
+    for (const [voter, votedFor] of Object.entries(votes)) {
+        if (models.includes(votedFor)) {
+            tally[votedFor] = (tally[votedFor] || 0) + 1;
         }
-
-        tally[v] = (tally[v] || 0) + 1;
     }
 
-    // Find the model with the most votes
-    let winner = null;
+    // Find the model(s) with the most votes
     let maxVotes = 0;
+    let winners: string[] = [];
+    
     for (const [model, count] of Object.entries(tally)) {
         if (count > maxVotes) {
             maxVotes = count;
-            winner = model;
+            winners = [model];
+        } else if (count === maxVotes) {
+            winners.push(model);
         }
     }
-    if (!winner) {
-        console.error("No winner found in voting process");
-        throw new Error("No winner found");
+
+    // Handle tie or no votes
+    let winner = null;
+    if (winners.length === 0) {
+        await Log({
+            level: "warn",
+            event_type: "voting_no_valid_votes",
+            debate_id: debateId,
+            message: "No valid votes were cast",
+        });
+        winner = "no_valid_votes";
+    } else if (winners.length === 1) {
+        await Log({
+            level: "info",
+            event_type: "voting_winner",
+            debate_id: debateId,
+            message: `Winner: ${winners[0]}`,
+        });
+        winner = winners[0];
+    } else {
+        await Log({
+            level: "info",
+            event_type: "voting_tie",
+            debate_id: debateId,
+            message: `Tie between models: ${winners.join(', ')}`,
+        });
+        winner = "tie";
     }
 
     // Update the debate with the winner
@@ -351,14 +543,18 @@ export async function vote({ debateId, topic, models }: VoteParams) {
             winner,
             status: "ended",
             ended_at: new Date().toISOString(),
+            winning_votes: maxVotes,
+            total_votes: Object.values(votes).filter(v => models.includes(v)).length,
+            is_tie: winners.length > 1
         })
         .eq("id", debateId);
 
-        // Return the winner
-        return {
-            winner,
-            votes,
-            tally,
-        };
+    // Return the winner
+    return {
+        winner,
+        votes,
+        tally,
+        tie: winners.length > 1 ? winners : null
+    };
 }
 
