@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ message: 'Invalid payload' }, { status: 400 });
     }
 
-    
+    // No flag check here, this can't run without scheduler, which is protected by flags
 
     // Start the debate
 
