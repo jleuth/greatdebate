@@ -16,8 +16,8 @@ export async function* openrouterStream({
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model,
-        messages,
+        model: model,
+        messages: messages,
         stream: true,
       }),
     });

@@ -23,7 +23,7 @@ type TurnHandlerParams = {
     turnIndex: number;
     topic: string;
     turns: any[];
-    messages: string;
+    messages: any[];
 };
 
 type VoteParams = {
@@ -156,9 +156,10 @@ export async function startDebate({ topic, models, category, maxTurns = 40 }: St
 }
 
 export default async function runDebate({ debateId, topic, models, maxTurns }: RunDebateParams) {
-    const PAUSE_DELAY_MS = 10000; // 4s between pause checks, adjust as needed
+    const PAUSE_DELAY_MS = 10000; // 10s between pause checks
 
     while (true) {
+        console.log("Starting new debate loop...");
         // --- 1. CHECK FLAGS ---
         const { data: flags, error: flagerror } = await supabaseAdmin
             .from('flags')
@@ -172,9 +173,18 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 message: "Error fetching flags",
                 detail: flagerror.message,
             });
-            // Can't safely continue, set error state.
-            await supabaseAdmin.from("debates").update({ status: "error" }).eq("id", debateId);
-            return "Could not check flags";
+            try {
+                await supabaseAdmin.from("debates").update({ status: "error" }).eq("id", debateId);
+            } catch (dbErr) {
+                await Log({
+                    level: "error",
+                    event_type: "db_update_error",
+                    debate_id: debateId,
+                    message: "Failed to update debate status to error after flag fetch failure",
+                    detail: dbErr instanceof Error ? dbErr.message : String(dbErr),
+                });
+            }
+            return { error: true, type: "flag_error", message: "Could not check flags" };
         }
 
         if (flags?.kill_switch_active === true || flags?.should_abort === true) {
@@ -183,8 +193,18 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 event_type: "flag_preventing_debate",
                 message: "A kill/abort flag has stopped this debate.",
             });
-            await supabaseAdmin.from("debates").update({ status: "aborted", ended_at: new Date().toISOString() }).eq("id", debateId);
-            return "A flag has stopped this debate.";
+            try {
+                await supabaseAdmin.from("debates").update({ status: "aborted", ended_at: new Date().toISOString() }).eq("id", debateId);
+            } catch (dbErr) {
+                await Log({
+                    level: "error",
+                    event_type: "db_update_error",
+                    debate_id: debateId,
+                    message: "Failed to update debate status to aborted after kill/abort flag",
+                    detail: dbErr instanceof Error ? dbErr.message : String(dbErr),
+                });
+            }
+            return { error: true, type: "debate_aborted", message: "A flag has stopped this debate." };
         }
 
         // --- 2. HANDLE PAUSE ---
@@ -195,18 +215,43 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 debate_id: debateId,
                 message: "Debate is paused, waiting to resume...",
             });
-            // Sleep, then re-check flags
-            while (flags?.debate_paused === true) {
+            // Sleep, then re-check flags in a loop
+            let stillPaused = true;
+            while (stillPaused) {
                 await new Promise(resolve => setTimeout(resolve, PAUSE_DELAY_MS));
+                try {
+                    const { data: pauseFlags, error: pauseFlagError } = await supabaseAdmin
+                        .from('flags')
+                        .select('debate_paused')
+                        .single();
+                    if (pauseFlagError) {
+                        await Log({
+                            level: "error",
+                            event_type: "flag_error",
+                            debate_id: debateId,
+                            message: "Error re-fetching flags during pause",
+                            detail: pauseFlagError.message,
+                        });
+                        break; // break out of pause if we can't check
+                    }
+                    stillPaused = pauseFlags?.debate_paused === true;
+                } catch (err) {
+                    await Log({
+                        level: "error",
+                        event_type: "pause_loop_error",
+                        debate_id: debateId,
+                        message: "Exception in pause re-check loop",
+                        detail: err instanceof Error ? err.message : String(err),
+                    });
+                    break;
+                }
             }
-
             await Log({
                 level: "info",
                 event_type: "debate_resumed",
                 debate_id: debateId,
                 message: "Debate has resumed.",
             });
-            
             continue;
         }
 
@@ -362,7 +407,7 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
 
     try {
         let firstToken = true;
-        for await (const token of openrouterStream({ model: modelName, messages: [messages] })) {
+        for await (const token of openrouterStream({ model: modelName, messages })) {
             if (firstToken) {
                 ttft_ms = Date.now() - startedAt;
                 firstToken = false;
