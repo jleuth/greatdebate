@@ -3,6 +3,7 @@
 import AIChat from "@/components/ux/aichat";
 import Status from "@/components/ux/status";
 import UserChat from "@/components/ux/userchat";
+import GlobalAlertBanner from "@/components/ux/globalalertbanner";
 import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
@@ -41,20 +42,25 @@ export default function Home() {
   const currentUsername = "";
   
   useEffect(() => {
-    if (flags.global_alerts) {
-      alert(flags.global_alerts);
+    if (flags.global_alerts) {  
+
     }
   }, [flags.global_alerts]);
 
   return (
-    <main className="p-5 flex space-x-5">
-      <div className="w-1/2">
-        <AIChat/>
+    <div>
+      <div className='p-5'>
+          <GlobalAlertBanner alert={flags.global_alerts} />
       </div>
-      <div className="w-1/2 flex flex-col gap-4">
-        <Status />
-        <UserChat roomName="great-debate-room" username={currentUsername} />
-      </div>
-    </main>
+      <main className="p-5 flex space-x-5">
+        <div className="w-1/2">
+          <AIChat/>
+        </div>
+        <div className="w-1/2 flex flex-col gap-4">
+          <Status />
+          <UserChat roomName="great-debate-room" username={currentUsername} />
+        </div>
+      </main>
+    </div>
   );
 }
