@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
+import Log from '@/lib/logger';
 
 const SERVER_TOKEN = process.env.SERVER_TOKEN; // VERY VERY SECRET, THIS ENSURES ONLY THE SERVER CAN SCHEDULE A DEBATE
 
@@ -11,6 +12,24 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
         }
 
+        // CHECK FLAGS
+        const { data: flags, error: flagerror } = await supabaseAdmin
+            .from('flags')
+            .select('kill_switch_active, debate_paused, enable_new_debates')
+            .single();
+
+        if (flagerror) {
+            return NextResponse.json({ error: flagerror.message }, { status: 500 });
+        }
+
+        if (
+            (flags?.kill_switch_active === true) ||
+            (flags?.debate_paused === true) ||
+            (flags?.enable_new_debates === false)
+        ) {
+            return NextResponse.json({ message: 'A flag is preventing a new debate from starting.' }, { status: 403 });
+        }
+        // END CHECK FLAGS
     const { data: debates, error } = await supabaseAdmin
         .from('debates')
         .select('status');
@@ -20,13 +39,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const hasNonEnded = debates?.some((debate: { status: string }) => debate.status !== 'ended');
+    const hasNonEnded = debates?.some((debate: { status: string }) => debate.status === 'running');
 
     if (hasNonEnded) {
         return NextResponse.json({ message: 'There are debates that have not ended.' }, { status: 204 });
     }
 
     // Define pools of categories, each with their own models and topics
+
     const pools = {
         'American v. Chinese': {
             models: ['openai/gpt-4.1', 'google/gemini-2.5-pro-preview', 'google/gemini-2.5-flash-preview', 'openai/chatgpt-4o-latest', 'anthropic/claude-3.7-sonnet', 'meta-llama/llama-4-maverick:free', 'qwen/qwen2.5-vl-32b-instruct:free', 'qwen/qwq-32b:free', 'deepseek/deepseek-chat:free', '01-ai/yi-large', 'deepseek/deepseek-prover-v2:free', 'qwen/qwen3-30b-a3b:free'],
@@ -104,10 +124,13 @@ export async function POST(req: NextRequest) {
 
     const debateSelection = pickDebateFromPools();
 
-    console.log('Picked Debate:', {
-        category: debateSelection.category,
-        topic: debateSelection.topic,
-        models: debateSelection.models,
+
+    // Log the selected debate configuration
+    await Log({
+        level: "info",
+        event_type: "debate_scheduler_selection",
+        message: `Selected debate`,
+        detail: JSON.stringify(debateSelection),
     });
 
     fetch('http://localhost:3000/api/debate/start', {

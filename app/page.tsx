@@ -13,7 +13,9 @@ const supabase = createClient(
 );
 
 export default function Home() {
-
+  
+  const [flags, setFlags] = useState<{ [key: string]: any }>({});
+  
   useEffect(() => {
     // 1. Get current flags
     supabase.from('flags').select('*').single().then(({ data }) => {
@@ -37,21 +39,15 @@ export default function Home() {
   
 
 
-  const [flags, setFlags] = useState<{ [key: string]: any }>({});
-
   const currentUsername = "";
-  
-  useEffect(() => {
-    if (flags.global_alerts) {  
 
-    }
-  }, [flags.global_alerts]);
 
   return (
     <div>
       <div className='p-5'>
           <GlobalAlertBanner alert={flags.global_alerts} />
       </div>
+
       <main className="p-5 flex space-x-5">
         <div className="w-1/2">
           <AIChat/>

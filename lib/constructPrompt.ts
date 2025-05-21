@@ -11,11 +11,13 @@ interface ConstructPromptParams {
     nextModelName: string;
 }
 
+// No flag check here, this can't run without turnHandler, which is protected by runDebate's flag checking
+
 export function constructPrompt({ topic, turns, systemPrompt, nextModelName }: ConstructPromptParams): string {
     const debateHistory = turns
         .slice(-10) // Get the last 10 turns
         .map(turn => `${turn.model_name}: ${turn.message}`)
-        .join("\\n");
+        .join("\n");
 
     const prompt = `
 System Prompt: ${systemPrompt}
