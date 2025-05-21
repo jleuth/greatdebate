@@ -1,5 +1,7 @@
 import Log from "./logger";
 
+// No flag check here, this can't run without turnHandler, which is protected by runDebate's flag checking
+
 export async function* openrouterStream({
     model,
     messages,
