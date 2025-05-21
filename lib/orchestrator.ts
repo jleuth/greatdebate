@@ -36,6 +36,37 @@ type VoteParams = {
 export async function startDebate({ topic, models, category, maxTurns = 40 }: StartDebateParams) {
     // This function sets up debate and calls runDebate to sustain the debate
 
+            // CHECK FLAGS
+            const { data: flags, error: flagerror } = await supabaseAdmin
+                .from('flags')
+                .select('kill_switch_active, debate_paused, enable_new_debates')
+                .single();
+    
+            if (flagerror) {
+                await Log({
+                    level: "error",
+                    event_type: "flag_error",
+                    message: "Error fetching flags",
+                    detail: flagerror.message,
+                });
+
+                return "Could not check flags";
+            }
+    
+            if (
+                (flags?.kill_switch_active === true) ||
+                (flags?.debate_paused === true) ||
+                (flags?.enable_new_debates === false)
+            ) {
+                await Log({
+                    level: "warn",
+                    event_type: "flag_preventing_debate",
+                    message: "A flag is preventing a new debate from starting.",
+                });
+                return "A flag is preventing a new debate from starting.";
+            }
+            // END CHECK FLAGS
+
     // 1. Create a new debate in the database
     const { data: debate, error: debateError } = await supabaseAdmin
         .from("debates")
@@ -130,6 +161,40 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
     const systemPrompt = "You are a helpful AI assistant participating in a debate."; 
 
     while(keepGoing) {
+
+        // Check if the debate has been told to abort, pause, or killswitched
+
+                // CHECK FLAGS
+            const { data: flags, error: flagerror } = await supabaseAdmin
+            .from('flags')
+            .select('kill_switch_active, debate_paused, should_abort')
+            .single();
+
+        if (flagerror) {
+            await Log({
+                level: "error",
+                event_type: "flag_error",
+                message: "Error fetching flags",
+                detail: flagerror.message,
+            });
+
+            return "Could not check flags";
+        }
+
+        if (
+            (flags?.kill_switch_active === true) ||
+            (flags?.debate_paused === true) ||
+            (flags?.should_abort === false)
+        ) {
+            await Log({
+                level: "warn",
+                event_type: "flag_preventing_debate",
+                message: "A flag has stopped this debate.",
+            });
+            return "A flag has stopped this debate.";
+        }
+        // END CHECK FLAGS
+
         // Get all turns so far
         const { data: turns, error: turnsError } = await supabaseAdmin
             .from("debate_turns")
@@ -258,6 +323,8 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
 export async function turnHandler({ debateId, modelName, turnIndex, topic, turns, messages }: TurnHandlerParams) {
     // Keep track of whos turn it is and calls the model to get a response
     
+    // No flag check here, this is called from runDebate which already checks flags
+
     // make a new turn in the database with empty content
     const { data: newTurn, error: newTurnError } = await supabaseAdmin
         .from("debate_turns")
@@ -378,6 +445,36 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
 
 export async function vote({ debateId, topic, models }: VoteParams) {
     // Handle the voting process, this func calls the vote turn, not runDebate.
+
+        // CHECK FLAGS
+        const { data: flags, error: flagerror } = await supabaseAdmin
+        .from('flags')
+        .select('kill_switch_active, enable_voting')
+        .single();
+
+    if (flagerror) {
+        await Log({
+            level: "error",
+            event_type: "flag_error",
+            message: "Error fetching flags",
+            detail: flagerror.message,
+        });
+
+        return "Could not check flags";
+    }
+
+    if (
+        (flags?.kill_switch_active === true) ||
+        (flags?.enable_voting === false)
+    ) {
+        await Log({
+            level: "warn",
+            event_type: "flag_preventing_debate",
+            message: "A flag is preventing voting",
+        });
+        return "A flag is preventing voting";
+    }
+    // END CHECK FLAGS
 
     // Check if the debate is still running, if not, return, if it is, update the status to voting
     const { data: debate, error: debateError } = await supabaseAdmin
