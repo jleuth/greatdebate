@@ -13,24 +13,38 @@ interface ConstructPromptParams {
 
 // No flag check here, this can't run without turnHandler, which is protected by runDebate's flag checking
 
-export function constructPrompt({ topic, turns, systemPrompt, nextModelName }: ConstructPromptParams): string {
-    const debateHistory = turns
-        .slice(-10) // Get the last 10 turns
-        .map(turn => `${turn.model_name}: ${turn.message}`)
-        .join("\n");
+export function constructPrompt({
+    topic,
+    turns,
+    systemPrompt,
+    nextModelName,
+  }: ConstructPromptParams): { role: string; content: string }[] {
+    // Compose the system prompt (single, first message)
+    const messages: { role: string; content: string }[] = [
+      { role: "system", content: systemPrompt || "You are a helpful debate AI." },
+      { role: "user", content: `Debate Topic: ${topic}` }
+    ];
+  
+    // Add up to 10 previous turns as assistant/user pairs
+    turns.slice(-10).forEach(turn => {
+      // Optionally: alternate role by model, or just use 'assistant' for all AI
+      messages.push({
+        role: "assistant",
+        content: `${turn.model_name}: ${turn.message}`
+      });
+    });
+  
+    // Add the current user turn request
+    messages.push({
+      role: "user",
+      content: `It is now your turn, ${nextModelName}. Please provide your response.`
+    });
 
-    const prompt = `
-System Prompt: ${systemPrompt}
-
-Debate Topic: ${topic}
-
-Debate History (last 10 turns):
-${debateHistory}
-
-It is now your turn, ${nextModelName}. Please provide your response.
-`;
-    return prompt.trim();
-}
+    console.log("Constructed messages:", messages);
+  
+    return messages;
+  }
+  
 
 export function constructVotingPrompt({ topic, turns, models }: { topic: string; turns: any[], models: string[] }) {
 

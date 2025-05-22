@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
             ],
         },
         'Comedy Hour': {
-            models: ['Llama-3', 'Qwen-2', 'Yi-34B', 'GPT-4.1', 'Claude 3 Opus'],
+            models: ['meta-llama/llama-4-maverick:free', 'openai/gpt-4.1', 'openai/chatgpt-4o-latest', 'google/gemini-2.5-flash-preview', 'anthropic/claude-3.7-sonnet', 'qwen/qwen3-235b-a22b:free'],
             topics: [
                 'Which model can generate the funniest jokes?',
                 'Which model can create the best memes?',

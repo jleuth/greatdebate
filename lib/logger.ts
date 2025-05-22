@@ -16,6 +16,22 @@ interface Info {
 
 export default async function Log({ level, event_type, debate_id, turn_id, vote_id, model, message, detail, latency_ms, tokens, error }: Info) {
 
+    //Check if logging is enabled in flags 
+    const { data: flags, error: flagerror } = await supabaseAdmin
+    .from('flags')
+    .select('enable_logging')
+    .single();
+
+    if (flagerror) {
+        console.error("Error fetching flags:", flagerror);
+        return "Error fetching flags";
+    }
+
+    if (flags?.enable_logging === false) {
+        console.log("Logging is disabled in flags.");
+        return "Logging is disabled in flags";
+    }
+
     const { data, error: supabaseError } = await supabaseAdmin
         .from("logs")
         .insert({
