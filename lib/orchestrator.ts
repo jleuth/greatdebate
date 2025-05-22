@@ -605,6 +605,14 @@ export async function vote({ debateId, topic, models }: VoteParams) {
         }
     }
 
+    // Log the voting results
+    await Log({
+        level: "info",
+        event_type: "winner",
+        debate_id: debateId,
+        message: `Voting results: ${JSON.stringify(tally)}`,
+    });
+
     // Handle tie or no votes
     let winner = null;
     if (winners.length === 0) {
@@ -645,6 +653,14 @@ export async function vote({ debateId, topic, models }: VoteParams) {
             is_tie: winners.length > 1
         })
         .eq("id", debateId);
+
+
+        await Log({
+            level: "info",
+            event_type: "debate_ended",
+            debate_id: debateId,
+            message: `The debate ended successfully with votes: ${JSON.stringify(votes)}`,
+        });
 
     // Return the winner
     return {
