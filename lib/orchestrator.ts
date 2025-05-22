@@ -32,6 +32,12 @@ type VoteParams = {
     models: string[];
 };
 
+// New type for the result of turnHandler
+type TurnHandlerResult =
+    | { status: "success"; turnId: string; content: string }
+    | { status: "timeout"; turnId: string; message: string } // Timeout occurred
+    | { status: "error"; turnId: string | null; message: string }; // Other errors (turnId null if DB insert failed)
+
 
 export async function startDebate({ topic, models, category, maxTurns = 40 }: StartDebateParams) {
     // This function sets up debate and calls runDebate to sustain the debate
@@ -157,6 +163,8 @@ export async function startDebate({ topic, models, category, maxTurns = 40 }: St
 
 export default async function runDebate({ debateId, topic, models, maxTurns }: RunDebateParams) {
     const PAUSE_DELAY_MS = 10000; // 10s between pause checks
+    let totalSkippedTurns = 0; // Counter for model timeouts
+    const MAX_SKIPPED_TURNS = 3; // Max allowed timeouts before aborting debate
 
     while (true) {
         console.log("Starting new debate loop...");
@@ -282,27 +290,20 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 level: "info",
                 event_type: "debate_max_turns_reached",
                 debate_id: debateId,
-                message: `Max turns (${maxTurns}) reached. Starting voting.`,
+                message: `Max turns (${maxTurns}) reached. Ending debate.`,
             });
-            try {
-                await vote({ debateId, topic, models });
-                await supabaseAdmin.from("debates").update({ status: "voting" }).eq("id", debateId);
-            } catch (voteError) {
-                await Log({
-                    level: "error",
-                    event_type: "voting_error",
-                    debate_id: debateId,
-                    message: "Error during voting",
-                    detail: voteError instanceof Error ? voteError.message : String(voteError),
-                });
-                await supabaseAdmin.from("debates").update({ status: "error" }).eq("id", debateId);
-            }
-            return "Debate reached max turns, moved to voting.";
+            await supabaseAdmin
+                .from("debates")
+                .update({ status: "ended", ended_at: new Date().toISOString(), detail: "Max turns reached." })
+                .eq("id", debateId);
+            return { error: false, type: "max_turns_reached", message: "Max turns reached." };
         }
 
         // --- 5. PREPARE TURN ---
-        const turnIndex = nonSystemTurns.length;
-        const modelIndex = turnIndex % models.length;
+        const turnIndexForModelSelection = nonSystemTurns.length; // 0-indexed count of model turns so far
+        const actualTurnIndex = turnIndexForModelSelection + 1; // 1-indexed actual turn number for the model
+        
+        const modelIndex = turnIndexForModelSelection % models.length;
         const modelName = models[modelIndex];
 
         const modelRole = `You are ${modelName}, arguing from a specific perspective.`;
@@ -322,171 +323,228 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
 
         await Log({
             level: "info",
-            event_type: "turn_start",
+            event_type: "turn_start_prep",
             debate_id: debateId,
             model: modelName,
-            message: `Turn ${turnIndex} started for model ${modelName}`,
+            // turn_index: actualTurnIndex, // Use turn_id once available from turnHandler or newTurn record
+            message: `Preparing turn ${actualTurnIndex} for model ${modelName}`,
         });
 
         // --- 6. EXECUTE TURN ---
-        try {
-            const turnResult = await turnHandler({
-                debateId,
-                modelName,
-                turnIndex,
-                topic,
-                turns,
-                messages: prompt,
-            });
+        const turnResult = await turnHandler({
+            debateId,
+            modelName,
+            turnIndex: actualTurnIndex, // This is the sequential number of the model's turn
+            topic,
+            turns: adaptedTurns, 
+            messages: prompt,    
+        });
+
+        if (turnResult.status === "error" && turnResult.turnId === null) {
             await Log({
-                level: "info",
-                event_type: "turn_end",
+                level: "error", 
+                event_type: "turn_handler_critical_failure",
                 debate_id: debateId,
-                turn_id: turnResult?.turnId,
-                model: modelName,
-                message: `Turn ${turnIndex} ended for model ${modelName}`,
-                tokens: turnResult?.tokens,
-                latency_ms: turnResult?.ttft_ms ?? undefined,
+                message: `Critical failure in turnHandler for debate ${debateId}: ${turnResult.message}. Ending debate.`,
+                detail: turnResult.message,
             });
-        } catch (error) {
-            await Log({
-                level: "error",
-                event_type: "turn_handler_error",
-                debate_id: debateId,
-                model: modelName,
-                turn_id: undefined,
-                message: `Error in turnHandler for turn ${turnIndex}`,
-                detail: error instanceof Error ? error.message : String(error),
-            });
-            await supabaseAdmin.from("debates").update({ status: "error" }).eq("id", debateId);
-            return "Error running debate turn";
+            await supabaseAdmin.from("debates").update({ status: "error", ended_at: new Date().toISOString(), detail: `Turn handler critical error: ${turnResult.message}` }).eq("id", debateId);
+            return { error: true, type: "turn_handler_critical", message: `Critical failure: ${turnResult.message}` };
         }
+
+        if (turnResult.status === "timeout") {
+            totalSkippedTurns++;
+            await Log({
+                level: "warn",
+                event_type: "model_turn_timeout",
+                debate_id: debateId,
+                model: modelName,
+                turn_id: turnResult.turnId ?? undefined, // Log with the actual turn ID
+                message: `Model ${modelName} timed out on turn ${actualTurnIndex} (ID: ${turnResult.turnId}). Total skipped turns: ${totalSkippedTurns}.`,
+            });
+
+            if (totalSkippedTurns >= MAX_SKIPPED_TURNS) {
+                await Log({
+                    level: "error",
+                    event_type: "debate_aborted_max_skips",
+                    debate_id: debateId,
+                    message: `Debate ${debateId} aborted after ${totalSkippedTurns} model timeouts.`,
+                });
+                await supabaseAdmin
+                    .from("debates")
+                    .update({ status: "error", ended_at: new Date().toISOString(), detail: `Aborted after ${totalSkippedTurns} model timeouts.` })
+                    .eq("id", debateId);
+                return { error: true, type: "debate_aborted_max_skips", message: `Debate aborted after ${totalSkippedTurns} model timeouts.` };
+            }
+        } else if (turnResult.status === "error") { 
+            await Log({
+                level: "warn",
+                event_type: "turn_processing_issue",
+                debate_id: debateId,
+                model: modelName,
+                turn_id: turnResult.turnId ?? undefined, // Log with the actual turn ID
+                message: `Issue processing turn ${actualTurnIndex} (ID: ${turnResult.turnId}) for ${modelName}. Status: ${turnResult.status}, Detail: ${turnResult.message}`,
+            });
+        }
+
+        const nextTurnNumberInDebate = actualTurnIndex + 1; 
+        const indexOfCurrentModel = models.indexOf(modelName);
+        const indexOfNextModel = (indexOfCurrentModel + 1) % models.length;
+        const nextModelToPlay = models[indexOfNextModel];
+
+        await supabaseAdmin
+            .from("debates")
+            .update({
+                current_turn_idx: nextTurnNumberInDebate,
+                current_model: nextModelToPlay,
+                last_activity_at: new Date().toISOString(),
+            })
+            .eq("id", debateId);
     }
 }
 
 
+export async function turnHandler({ debateId, modelName, turnIndex, topic, turns, messages }: TurnHandlerParams): Promise<TurnHandlerResult> {
+    await Log({
+        level: "info",
+        event_type: "turn_handler_invoked",
+        debate_id: debateId,
+        model: modelName,
+        // turn_index: turnIndex, // Keep for sequential understanding if needed, but turn_id is primary key
+        message: `Turn handler invoked for model ${modelName}, turn sequence ${turnIndex}.`,
+    });
 
-export async function turnHandler({ debateId, modelName, turnIndex, topic, turns, messages }: TurnHandlerParams) {
-    // Keep track of whos turn it is and calls the model to get a response
-    
-    // No flag check here, this is called from runDebate which already checks flags
-
-    // make a new turn in the database with empty content
-    const { data: newTurn, error: newTurnError } = await supabaseAdmin
+    const { data: newTurnData, error: newTurnError } = await supabaseAdmin
         .from("debate_turns")
         .insert({
             debate_id: debateId,
             model: modelName,
-            turn_index: turnIndex,
-            content: "",
+            turn_index: turnIndex, // Store the sequential turn index
+            content: "", 
             tokens: 0,
             ttft_ms: null,
             started_at: new Date().toISOString(),
-            finished_at: null,
+            finished_at: null, 
         })
         .select()
         .single();
+
     if (newTurnError) {
         await Log({
             level: "error",
-            event_type: "turn_create_error",
+            event_type: "db_turn_create_error",
             debate_id: debateId,
-            turn_id: undefined,
             model: modelName,
-            message: `Error creating new turn for model ${modelName}`,
+            // turn_index: turnIndex,
+            message: "Error creating new turn record in database",
             detail: newTurnError.message,
         });
-        throw new Error("Failed to create new turn");
+        return { status: "error", turnId: null, message: `Failed to create turn record: ${newTurnError.message}` };
     }
+    const newTurn = newTurnData;
 
-    // Call model and stream from openrouter
-    let content = "";
-    let tokens = 0;
+    const FIRST_TOKEN_TIMEOUT_MS = 5 * 60 * 1000; 
     let ttft_ms: number | null = null;
-    const startedAt = Date.now();
+    const turnStartTime = Date.now();
+    let streamedContent = ""; 
+    let tokensCount = 0; 
+    let firstTokenReceived = false;
 
     try {
-        let firstToken = true;
-        for await (const token of openrouterStream({ model: modelName, messages })) {
-            if (firstToken) {
-                ttft_ms = Date.now() - startedAt;
-                firstToken = false;
-            }
-            content += token;
-            tokens++;
+        const generator = openrouterStream({ model: modelName, messages });
 
-            // Batch DB updates every 5 tokens to reduce load
-            if (tokens === 1 || tokens % 5 === 0) {
-                await supabaseAdmin
-                    .from("debate_turns")
-                    .update({
-                        content,
-                        tokens,
-                        ttft_ms,
-                    })
-                    .eq("id", newTurn.id);
-            }
-        }
-    } catch (error: any) {
-        await Log({
-            level: "error",
-            event_type: "turn_stream_error",
-            debate_id: debateId,
-            turn_id: newTurn?.id,
-            model: modelName,
-            message: `Error streaming tokens for model ${modelName}`,
-            detail: error instanceof Error ? error.message : String(error),
-        });
+        const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => {
+                if (!firstTokenReceived) {
+                    reject(new Error("First token timeout")); 
+                }
+            }, FIRST_TOKEN_TIMEOUT_MS)
+        );
 
-        // Log error in the database, scoped to the specific turn
-        if (newTurn && newTurn.id) {
+        const streamProcessor = async () => {
+            for await (const chunk of generator) {
+                if (!firstTokenReceived) {
+                    firstTokenReceived = true;
+                    ttft_ms = Date.now() - turnStartTime;
+                    await supabaseAdmin
+                        .from("debate_turns")
+                        .update({ ttft_ms })
+                        .eq("id", newTurn.id);
+                }
+                streamedContent += chunk;
+            }
+        };
+
+        await Promise.race([streamProcessor(), timeoutPromise]);
+
+        if (!firstTokenReceived && streamedContent === "") {
+            await Log({
+                level: "warn",
+                event_type: "model_empty_response",
+                debate_id: debateId,
+                model: modelName,
+                turn_id: newTurn.id,
+                message: `Model ${modelName} returned an empty stream for turn ${turnIndex} (ID: ${newTurn.id}).`,
+            });
             await supabaseAdmin
                 .from("debate_turns")
                 .update({
-                    error: error.message,
+                    content: "[Model returned empty response]",
                     finished_at: new Date().toISOString(),
+                    ttft_ms, 
                 })
                 .eq("id", newTurn.id);
+            return { status: "error", turnId: newTurn.id, message: "Model returned an empty stream." };
         }
-        
-        // Propagate the error to allow runDebate to handle it
-        throw error;
-    }
-    
-    // Finish up turn, update statistics and set finished_at
-    // Ensure newTurn is defined before trying to access its id
-    if (newTurn && newTurn.id) {
+
+        const finishedAt = new Date().toISOString();
+        await supabaseAdmin
+            .from("debate_turns")
+            .update({
+                content: streamedContent,
+                tokens: tokensCount, 
+                finished_at: finishedAt,
+            })
+            .eq("id", newTurn.id);
+
+        await Log({
+            level: "info",
+            event_type: "turn_completed",
+            debate_id: debateId,
+            model: modelName,
+            turn_id: newTurn.id,
+            message: `Turn ${turnIndex} (ID: ${newTurn.id}) for model ${modelName} completed successfully.`,
+        });
+        return { status: "success", turnId: newTurn.id, content: streamedContent };
+
+    } catch (error: any) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const isTimeout = errorMessage === "First token timeout";
+
+        await Log({
+            level: "error",
+            event_type: isTimeout ? "model_turn_timeout_detail" : "turn_handler_execution_error",
+            debate_id: debateId,
+            model: modelName,
+            turn_id: newTurn.id,
+            message: `Error during turn ${turnIndex} (ID: ${newTurn.id}) for model ${modelName}: ${errorMessage}`,
+            detail: errorMessage,
+        });
 
         await supabaseAdmin
             .from("debate_turns")
             .update({
-                content,
-                tokens,
-                ttft_ms,
+                content: `Error: ${errorMessage}`,
                 finished_at: new Date().toISOString(),
+                ttft_ms, 
             })
             .eq("id", newTurn.id);
 
-        // Update the debate's current turn index and model
-        await supabaseAdmin
-            .from("debates")
-            .update({
-                current_turn_idx: turnIndex,
-                current_model: modelName,
-            })
-            .eq("id", debateId);
-
-        // Final return
-        return {
-            turnId: newTurn.id,
-            content,
-            tokens,
-            ttft_ms,
-            finishedAt: new Date().toISOString(),
-        };
+        if (isTimeout) {
+            return { status: "timeout", turnId: newTurn.id, message: errorMessage };
+        }
+        return { status: "error", turnId: newTurn.id, message: errorMessage };
     }
-    
-    throw new Error("Turn creation failed: newTurn is undefined");
 }
 
 export async function vote({ debateId, topic, models }: VoteParams) {
