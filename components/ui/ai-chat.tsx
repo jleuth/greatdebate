@@ -38,7 +38,7 @@ export const AiChatDisplay = ({
   }, [allMessages, scrollToBottom])
 
   return (
-    <div className="flex flex-col w-full bg-background text-foreground antialiased h-96 max-h-[32rem]">
+    <div className="flex flex-col w-full bg-background text-foreground antialiased h-full max-h-full">
       {/* Messages */}
       <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
         {allMessages.length === 0 ? (
