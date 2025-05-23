@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
 
     const pools = {
         'American v. Chinese': {
-            models: ['openai/gpt-4.1', 'google/gemini-2.5-pro-preview', 'google/gemini-2.5-flash-preview', 'openai/chatgpt-4o-latest', 'anthropic/claude-3.7-sonnet', 'meta-llama/llama-4-maverick:free', 'qwen/qwen2.5-vl-32b-instruct:free', 'qwen/qwq-32b:free', 'deepseek/deepseek-chat:free', '01-ai/yi-large', 'deepseek/deepseek-prover-v2:free', 'qwen/qwen3-30b-a3b:free'],
+            models: ['openai/gpt-4.1', 'google/gemini-2.5-pro-preview', 'google/gemini-2.5-flash-preview', 'openai/chatgpt-4o-latest', 'anthropic/claude-sonnet-4', 'meta-llama/llama-4-maverick:free', 'qwen/qwen2.5-vl-32b-instruct:free', 'qwen/qwq-32b:free', 'deepseek/deepseek-chat:free', '01-ai/yi-large', 'deepseek/deepseek-prover-v2:free', 'qwen/qwen3-30b-a3b:free'],
             topics: [
                 'Who will reach AGI first, America or China?',
                 'Which country leads in AI safety research, America or China?',
@@ -57,14 +57,14 @@ export async function POST(req: NextRequest) {
             ],
         },
         'Reasoning Round': {
-            models: [ 'openai/o3', 'google/gemini-2.5-pro-preview', 'deepseek/deepseek-r1:free', 'perplexity/r1-1776', 'anthropic/claude-3.7-sonnet:thinking', 'x-ai/grok-3-beta', 'openai/o1', 'qwen/qwq-32b:free', 'microsoft/phi-4-reasoning-plus:free', 'openai/o4-mini-high'],
+            models: [ 'openai/o4-mini-high', 'google/gemini-2.5-pro-preview', 'deepseek/deepseek-r1:free', 'perplexity/r1-1776', 'anthropic/claude-opus-4', 'x-ai/grok-3-beta', 'openai/o1', 'qwen/qwq-32b:free', 'microsoft/phi-4-reasoning-plus:free'],
             topics: [
                 'Will open source or closed source AI dominate the future?',
                 'Are open source models safer than closed source models?',
             ],
         },
         'SLM Smackdown': {
-            models: ['openai/gpt-4.1-nano', 'google/gemma-3-4b-it:free', 'google/gemini-2.0-flash-lite-001', 'mistralai/ministral-3b', 'meta-llama/llama-3.2-3b-instruct', 'amazon/nova-lite-v1', 'qwen/qwen3-4b:free'],
+            models: ['openai/gpt-4.1-nano', 'google/gemma-3n-e4b-it:free', 'google/gemini-2.0-flash-lite-001', 'mistralai/ministral-3b', 'meta-llama/llama-3.2-3b-instruct', 'amazon/nova-lite-v1', 'qwen/qwen3-4b:free'],
             topics: [
                 'Which model is the best for reasoning tasks?',
                 'Which model is the best for creative writing?',
@@ -78,14 +78,14 @@ export async function POST(req: NextRequest) {
             ],
         },
         'Popularity Contest': {
-            models: ['meta-llama/llama-4-maverick:free', 'openai/gpt-4.1', 'openai/chatgpt-4o-latest', 'google/gemini-2.5-flash-preview', 'anthropic/claude-3.7-sonnet', 'qwen/qwen3-235b-a22b:free'],
+            models: ['meta-llama/llama-4-maverick:free', 'openai/gpt-4.1', 'openai/chatgpt-4o-latest', 'google/gemini-2.5-flash-preview', 'anthropic/claude-sonnet-4', 'qwen/qwen3-235b-a22b:free'],
             topics: [
                 'Which model is the most popular among users?',
                 'Which model has the best community support?',
             ],
         },
         'Comedy Hour': {
-            models: ['meta-llama/llama-4-maverick:free', 'openai/gpt-4.1', 'openai/chatgpt-4o-latest', 'google/gemini-2.5-flash-preview', 'anthropic/claude-3.7-sonnet', 'qwen/qwen3-235b-a22b:free'],
+            models: ['meta-llama/llama-4-maverick:free', 'openai/gpt-4.1', 'openai/chatgpt-4o-latest', 'google/gemini-2.5-flash-preview', 'anthropic/claude-sonnet-4', 'qwen/qwen3-235b-a22b:free'],
             topics: [
                 'Which model can generate the funniest jokes?',
                 'Which model can create the best memes?',
