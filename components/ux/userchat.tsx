@@ -36,10 +36,8 @@ const UserChat: React.FC<UserChatProps> = ({ roomName, username: initialUsername
     }
   }
 
-  
-
   return (
-    <Card className="flex flex-col h-full">
+    <Card className="flex flex-col h-full max-h-full">
       <CardHeader className='font-mono text-gray-400 pb-2'>
         CHAT
         <div className="mt-2">
@@ -55,9 +53,10 @@ const UserChat: React.FC<UserChatProps> = ({ roomName, username: initialUsername
         </div>
       </CardHeader>
 
-      <CardContent className="flex-grow overflow-y-auto">
-        {/* Pass the potentially empty inputUsername here; RealtimeChat will handle disabling input */}
-        <RealtimeChat roomName={roomName} username={inputUsername} onMessage={handleMessage} messages={messages}/>
+      <CardContent className="flex-1 p-4">
+        <div className="overflow-y-auto max-h-[400px] h-[400px]">
+          <RealtimeChat roomName={roomName} username={inputUsername} onMessage={handleMessage} messages={messages}/>
+        </div>
       </CardContent>
     </Card>
   );

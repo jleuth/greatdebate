@@ -23,8 +23,10 @@ const AIChat: React.FC<AIChatProps> = () => {
         DEBATE
       </CardHeader>
 
-      <CardContent className="flex-grow overflow-y-auto">
-        <AiChatDisplay messages={messages} />
+      <CardContent className="flex-1 p-4">
+        <div className="overflow-y-auto max-h-[100vh] h-[80vh]">
+          <AiChatDisplay messages={messages} />
+        </div>
       </CardContent>
     </Card>
   );

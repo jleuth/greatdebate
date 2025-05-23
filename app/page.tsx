@@ -54,7 +54,13 @@ export default function Home() {
         </div>
         <div className="w-1/2 flex flex-col gap-4">
           <Status />
+
+          {flags.enable_user_chat === true ? (
           <UserChat roomName="great-debate-room" username={currentUsername} />
+        ) : (
+          <div>User chat is currently disabled.</div>
+        )}
+        
         </div>
       </main>
     </div>
