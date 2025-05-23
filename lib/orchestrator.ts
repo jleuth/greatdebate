@@ -69,6 +69,9 @@ export async function startDebate({ topic, models, category, maxTurns = 40 }: St
                     event_type: "flag_preventing_debate",
                     message: "A flag is preventing a new debate from starting.",
                 });
+                // Send system message to chat
+                // We don't have a debateId yet, so this message is general
+                // Consider if a global system message channel is needed or if this is fine if it doesn't appear in a specific debate
                 return "A flag is preventing a new debate from starting.";
             }
             // END CHECK FLAGS
@@ -223,6 +226,17 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 debate_id: debateId,
                 message: "Debate is paused, waiting to resume...",
             });
+            // Send system message to chat
+            await supabaseAdmin.from("debate_turns").insert({
+                debate_id: debateId,
+                model: "system",
+                turn_index: -1, // Or a specific turn_index for system messages
+                content: "The debate is currently paused. Waiting to resume...",
+                tokens: 0,
+                ttft_ms: null,
+                started_at: new Date().toISOString(),
+                finished_at: new Date().toISOString(), // System messages are instant
+            });
             // Sleep, then re-check flags in a loop
             let stillPaused = true;
             while (stillPaused) {
@@ -259,6 +273,17 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 event_type: "debate_resumed",
                 debate_id: debateId,
                 message: "Debate has resumed.",
+            });
+            // Send system message to chat
+            await supabaseAdmin.from("debate_turns").insert({
+                debate_id: debateId,
+                model: "system",
+                turn_index: -1, 
+                content: "The debate has resumed.",
+                tokens: 0,
+                ttft_ms: null,
+                started_at: new Date().toISOString(),
+                finished_at: new Date().toISOString(),
             });
             continue;
         }
@@ -374,6 +399,17 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                     .from("debates")
                     .update({ status: "error", ended_at: new Date().toISOString(), detail: `Aborted after ${totalSkippedTurns} model timeouts.` })
                     .eq("id", debateId);
+                // Send system message to chat
+                await supabaseAdmin.from("debate_turns").insert({
+                    debate_id: debateId,
+                    model: "system",
+                    turn_index: -1,
+                    content: `Debate aborted after ${totalSkippedTurns} model timeouts.`,
+                    tokens: 0,
+                    ttft_ms: null,
+                    started_at: new Date().toISOString(),
+                    finished_at: new Date().toISOString(),
+                });
                 return { error: true, type: "debate_aborted_max_skips", message: `Debate aborted after ${totalSkippedTurns} model timeouts.` };
             }
         } else if (turnResult.status === "error") { 
@@ -563,7 +599,7 @@ export async function vote({ debateId, topic, models }: VoteParams) {
             message: "Error fetching flags",
             detail: flagerror.message,
         });
-
+        // No debateId to send system message to a specific chat here
         return "Could not check flags";
     }
 
@@ -575,6 +611,17 @@ export async function vote({ debateId, topic, models }: VoteParams) {
             level: "warn",
             event_type: "flag_preventing_debate",
             message: "A flag is preventing voting",
+        });
+        // Send system message to chat
+        await supabaseAdmin.from("debate_turns").insert({
+            debate_id: debateId,
+            model: "system",
+            turn_index: -1,
+            content: "A system flag is currently preventing voting.",
+            tokens: 0,
+            ttft_ms: null,
+            started_at: new Date().toISOString(),
+            finished_at: new Date().toISOString(),
         });
         return "A flag is preventing voting";
     }
@@ -607,6 +654,17 @@ export async function vote({ debateId, topic, models }: VoteParams) {
         event_type: "voting_started",
         debate_id: debateId,
         message: `Voting started for debate ${debateId}`,
+    });
+    // Send system message to chat
+    await supabaseAdmin.from("debate_turns").insert({
+        debate_id: debateId,
+        model: "system",
+        turn_index: -1,
+        content: "The voting phase has begun! Models will now cast their votes.",
+        tokens: 0,
+        ttft_ms: null,
+        started_at: new Date().toISOString(),
+        finished_at: new Date().toISOString(),
     });
 
     // Get all turns and create transcript - exclude system messages for voting
@@ -675,6 +733,17 @@ export async function vote({ debateId, topic, models }: VoteParams) {
                 model,
                 message: `Model ${model} voted for ${votesFor}`,
             });
+            // Send system message to chat about the vote
+            await supabaseAdmin.from("debate_turns").insert({
+                debate_id: debateId,
+                model: "system",
+                turn_index: -1,
+                content: `Model ${model} has voted for ${votesFor}.`,
+                tokens: 0,
+                ttft_ms: null,
+                started_at: new Date().toISOString(),
+                finished_at: new Date().toISOString(),
+            });
         } catch (error) {
             await Log({
                 level: "error",
@@ -716,6 +785,17 @@ export async function vote({ debateId, topic, models }: VoteParams) {
         debate_id: debateId,
         message: `Voting results: ${JSON.stringify(tally)}`,
     });
+    // Send system message for overall voting results (raw tally)
+    await supabaseAdmin.from("debate_turns").insert({
+        debate_id: debateId,
+        model: "system",
+        turn_index: -1,
+        content: `Voting results: ${JSON.stringify(tally)}.`,
+        tokens: 0,
+        ttft_ms: null,
+        started_at: new Date().toISOString(),
+        finished_at: new Date().toISOString(),
+    });
 
     // Handle tie or no votes
     let winner = null;
@@ -727,6 +807,17 @@ export async function vote({ debateId, topic, models }: VoteParams) {
             message: "No valid votes were cast",
         });
         winner = "no_valid_votes";
+        // Send system message to chat
+        await supabaseAdmin.from("debate_turns").insert({
+            debate_id: debateId,
+            model: "system",
+            turn_index: -1,
+            content: "No valid votes were cast in this debate.",
+            tokens: 0,
+            ttft_ms: null,
+            started_at: new Date().toISOString(),
+            finished_at: new Date().toISOString(),
+        });
     } else if (winners.length === 1) {
         await Log({
             level: "info",
@@ -735,6 +826,17 @@ export async function vote({ debateId, topic, models }: VoteParams) {
             message: `Winner: ${winners[0]}`,
         });
         winner = winners[0];
+        // Send system message to chat
+        await supabaseAdmin.from("debate_turns").insert({
+            debate_id: debateId,
+            model: "system",
+            turn_index: -1,
+            content: `The winner of the debate is: ${winner}!`,
+            tokens: 0,
+            ttft_ms: null,
+            started_at: new Date().toISOString(),
+            finished_at: new Date().toISOString(),
+        });
     } else {
         await Log({
             level: "info",
@@ -743,6 +845,17 @@ export async function vote({ debateId, topic, models }: VoteParams) {
             message: `Tie between models: ${winners.join(', ')}`,
         });
         winner = "tie";
+        // Send system message to chat
+        await supabaseAdmin.from("debate_turns").insert({
+            debate_id: debateId,
+            model: "system",
+            turn_index: -1,
+            content: `The debate resulted in a tie between: ${winners.join(', ')}.`,
+            tokens: 0,
+            ttft_ms: null,
+            started_at: new Date().toISOString(),
+            finished_at: new Date().toISOString(),
+        });
     }
 
     // Update the debate with the winner
