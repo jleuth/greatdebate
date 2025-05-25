@@ -1,9 +1,9 @@
 'use client';
 
 import AIChat from "@/components/ux/aichat";
-import Status from "@/components/ux/status";
-import UserChat from "@/components/ux/userchat";
 import GlobalAlertBanner from "@/components/ux/globalalertbanner";
+import DebateBanner from "@/components/ux/debate-banner";
+import StatusChatTabs from "@/components/ux/status-chat-tabs";
 import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
@@ -43,24 +43,22 @@ export default function Home() {
 
 
   return (
-    <div>
-      <div className='p-5'>
+    <div className="h-screen overflow-hidden bg-gradient-to-br from-black via-gray-900 to-gray-800 flex flex-col">
+      <div className='p-4 space-y-3 flex-shrink-0'>
           <GlobalAlertBanner alert={flags.global_alerts} />
+          <DebateBanner />
       </div>
 
-      <main className="p-5 flex space-x-5">
-        <div className="w-1/2">
+      <main className="flex-1 px-4 pb-4 flex space-x-4 min-h-0">
+        <div className="w-1/2 flex flex-col min-h-0">
           <AIChat/>
         </div>
-        <div className="w-1/2 flex flex-col gap-4">
-          <Status />
-
-          {flags.enable_user_chat === true ? (
-          <UserChat roomName="great-debate-room" username={currentUsername} />
-        ) : (
-          <div>User chat is currently disabled.</div>
-        )}
-        
+        <div className="w-1/2 flex flex-col min-h-0">
+          <StatusChatTabs 
+            enableUserChat={flags.enable_user_chat === true}
+            roomName="great-debate-room"
+            username={currentUsername}
+          />
         </div>
       </main>
     </div>

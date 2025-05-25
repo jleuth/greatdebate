@@ -88,15 +88,20 @@ export const RealtimeChat = ({
   const isUsernameMissing = !username || username.trim() === '';
 
   return (
-    <div className="flex flex-col h-full w-full bg-background text-foreground antialiased">
+    <div className="flex flex-col h-full w-full bg-gradient-to-b from-black to-gray-900 text-gray-100 antialiased">
       {/* Messages */}
-      <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
         {allMessages.length === 0 ? (
-          <div className="text-center text-sm text-muted-foreground">
-            No messages yet. Start the conversation!
+          <div className="text-center py-8">
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-12 h-12 bg-gradient-to-br from-red-800 to-black rounded-full flex items-center justify-center shadow-lg ring-2 ring-red-900/30">
+                <span className="text-2xl">💬</span>
+              </div>
+              <p className="text-gray-400 text-sm">No messages yet. Start the conversation!</p>
+            </div>
           </div>
         ) : null}
-        <div className="space-y-1">
+        <div className="space-y-2">
           {allMessages.map((message, index) => {
             const prevMessage = index > 0 ? allMessages[index - 1] : null
             const showHeader = !prevMessage || prevMessage.user.name !== message.user.name
@@ -110,6 +115,7 @@ export const RealtimeChat = ({
                   message={message}
                   isOwnMessage={message.user.name === username}
                   showHeader={showHeader}
+                  isAiMessage={false}
                 />
               </div>
             )
@@ -117,12 +123,11 @@ export const RealtimeChat = ({
         </div>
       </div>
 
-      <form onSubmit={handleSendMessage} className="flex w-full gap-2 border-t border-border p-4">
+      <form onSubmit={handleSendMessage} className="flex w-full gap-3 border-t border-gray-700 p-4 bg-gradient-to-r from-gray-900/50 to-black/50 backdrop-blur-sm flex-shrink-0">
         <Input
           className={cn(
-            'rounded-full bg-background text-sm transition-all duration-300',
-            // Keep existing logic for width adjustment if desired, or simplify
-            isConnected && newMessage.trim() && !isUsernameMissing ? 'w-[calc(100%-36px)]' : 'w-full'
+            'rounded-xl bg-black/50 text-sm transition-all duration-300 border-gray-600 text-white placeholder-gray-500 focus:border-red-400 focus:ring-red-400/30',
+            isConnected && newMessage.trim() && !isUsernameMissing ? 'w-[calc(100%-48px)]' : 'w-full'
           )}
           type="text"
           value={newMessage}
@@ -131,7 +136,7 @@ export const RealtimeChat = ({
           disabled={isUsernameMissing}
         />
         <Button
-          className="aspect-square rounded-full animate-in fade-in slide-in-from-right-4 duration-300"
+          className="aspect-square rounded-xl bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 border border-red-500/30 transition-all duration-200"
           type="submit"
           disabled={isUsernameMissing || !newMessage.trim() || !isConnected}
         >

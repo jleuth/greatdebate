@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { type ChatMessage } from './use-debate-turns'; // Or define your own
 
 interface DebateTurnFromDb {
@@ -30,40 +30,25 @@ export function usePastAiMessages() {
     setError(null);
 
     try {
-      const { data: endedTurns, error: endedTurnsError } = await supabase
-        .from('debates')
-        .select('id')
-        .in('status', ['ended', 'errored']);
-      if (endedTurnsError) {
-        throw endedTurnsError;
-      }
-
-      console.log('Ended Turns:', endedTurns);
-      
-      const endedDebateIds = endedTurns?.map((debate: { id: string }) => debate.id) || [];
-      console.log('Ended Debate IDs:', endedDebateIds);
-
+      // Get all turns ordered by turn_index ascending (chronological order)
       const { data, error: dbError } = await supabase
         .from('debate_turns')
         .select('*')
         .order('turn_index', { ascending: true });
-        
 
       if (dbError) {
         throw dbError;
       }
 
       if (data) {
-        const filteredData = data.filter((turn: DebateTurnFromDb & { debate_id?: string }) =>
-          !endedDebateIds.includes(turn.debate_id!) // Filter out turns from ended debates
-        );
-        
-        const formattedMessages: ChatMessage[] = filteredData.map((turn: DebateTurnFromDb) => ({
+        // For now, let's simplify and not filter by ended debates
+        const formattedMessages: ChatMessage[] = data.map((turn: DebateTurnFromDb) => ({
           id: turn.id,
           content: turn.content,
           user: { name: turn.model }, // model name in place of username
-          createdAt: turn.started_at || turn.finished_at || '', // Use whichever you prefer
+          createdAt: turn.started_at || turn.finished_at || new Date().toISOString(),
         }));
+
         setMessages(formattedMessages);
       } else {
         setMessages([]);

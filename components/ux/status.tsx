@@ -2,6 +2,8 @@ import React from 'react';
 import { Card, CardContent, CardTitle, CardFooter, CardHeader } from '@/components/ui/card';
 import { createClient } from '@supabase/supabase-js'
 import { useEffect, useState } from 'react';
+import { getModelTheme, getModelDisplayName, getModelCompany } from '@/lib/model-colors';
+import { Clock, Users, Zap } from 'lucide-react';
 
 // Helper function to format time (you might want to move this to a utils file)
 const formatTimeElapsed = (startTime: string | undefined): string => {
@@ -69,64 +71,139 @@ const Status: React.FC = () => {
         };
       }, [debates.started_at, debates.status]); // Add dependencies
 
-    // Mocked models for now, ideally this would come from config or API
+    // Dynamic models with theme-based colors
     const modelsInPlay = [
-        { id: debates.model_a, name: debates.model_a, color: 'bg-red-500' },
-        { id: debates.model_b, name: debates.model_b, color: 'bg-blue-500' },
-        { id: debates.model_c, name: debates.model_c, color: 'bg-green-500' },
-        { id: debates.model_d, name: debates.model_d, color: 'bg-yellow-500' },
-    ];
+        { id: debates.model_a, name: debates.model_a, theme: getModelTheme(debates.model_a) },
+        { id: debates.model_b, name: debates.model_b, theme: getModelTheme(debates.model_b) },
+        { id: debates.model_c, name: debates.model_c, theme: getModelTheme(debates.model_c) },
+        { id: debates.model_d, name: debates.model_d, theme: getModelTheme(debates.model_d) },
+    ].filter(model => model.id); // Filter out undefined models
 
-    const currentModelId = debates.current_model_name || modelsInPlay[0].id; // Default to first if not set
+    const currentModelId = debates.current_model || modelsInPlay[0]?.id; // Default to first if not set
     const turnsTaken = debates.current_turn_idx || 0; // Default to 0 if not set
     const maxTurns = 40;
     const turnProgress = (turnsTaken / maxTurns) * 100;
 
+    const getStatusColor = (status: string) => {
+        switch (status) {
+            case 'running':
+                return 'text-red-400';
+            case 'voting':
+                return 'text-red-300';
+            case 'ended':
+                return 'text-gray-400';
+            case 'error':
+                return 'text-red-500';
+            default:
+                return 'text-red-400';
+        }
+    };
+
+    const getStatusIcon = (status: string) => {
+        switch (status) {
+            case 'running':
+                return <Zap className="w-4 h-4 animate-pulse text-red-400" />;
+            case 'voting':
+                return <Users className="w-4 h-4 text-red-300" />;
+            default:
+                return <Clock className="w-4 h-4 text-red-400" />;
+        }
+    };
+
     return (
-        <Card className="text-white w-full mx-auto">
-            <CardHeader className='font-mono text-gray-400 border-b pb-2'>
-                STATUS: <span className="text-green-400">{debates.status || 'Loading...'}</span>
+        <Card className="text-white w-full mx-auto bg-gradient-to-br from-black to-gray-900 border-gray-700 shadow-2xl">
+            <CardHeader className='font-mono text-gray-400 border-b border-gray-700 pb-3 bg-gradient-to-r from-gray-900/50 to-black/50 backdrop-blur-sm'>
+                <div className="flex items-center gap-3">
+                    {getStatusIcon(debates.status)}
+                    <span className="font-bold">STATUS:</span>
+                    <span className={`font-bold ${getStatusColor(debates.status)} bg-black/30 px-2 py-1 rounded-md`}>
+                        {debates.status?.toUpperCase() || 'LOADING...'}
+                    </span>
+                </div>
             </CardHeader>
             
-            <CardContent className="pt-6 pb-6 space-y-8">
-              <div className='flex flex-row justify-between items-center'>
-                <div>
-                    <h3 className="font-mono text-gray-400 mb-3 text-sm">IN PLAY:</h3>
-                    <ul className="space-y-2">
-                        {modelsInPlay.map(model => (
-                            <li key={model.id} className={`flex items-center text-sm ${model.id === currentModelId ? 'text-white font-semibold' : 'text-gray-400'}`}>
-                                <span className={`w-3 h-3 rounded-full mr-3 ${model.color} ${model.id === currentModelId ? 'ring-2 ring-offset-2 ring-offset-gray-900 ring-white' : ''}`}></span>
-                                {model.name}
-                            </li>
-                        ))}
-                    </ul>
+            <CardContent className="pt-6 pb-6 space-y-6">
+              <div className='flex flex-row justify-between items-start'>
+                <div className="flex-1">
+                    <h3 className="font-mono text-gray-400 mb-4 text-sm flex items-center gap-2">
+                        <Users className="w-4 h-4" />
+                        MODELS IN PLAY:
+                    </h3>
+                    <div className="space-y-3">
+                        {modelsInPlay.map(model => {
+                            const isCurrentModel = model.id === currentModelId;
+                            const displayName = getModelDisplayName(model.id);
+                            const company = getModelCompany(model.id);
+                            
+                            return (
+                                <div 
+                                    key={model.id} 
+                                    className={`flex items-center gap-3 p-3 rounded-xl transition-all duration-200 ${
+                                        isCurrentModel 
+                                            ? `${model.theme.bg} ${model.theme.border} border-2 ring-2 ${model.theme.ring}/30` 
+                                            : 'hover:bg-gray-800/50 border border-gray-700/50'
+                                    }`}
+                                >
+                                    <div 
+                                        className={`w-5 h-5 rounded-full ${model.theme.primary} shadow-lg ${
+                                            isCurrentModel ? `ring-2 ${model.theme.ring}/60 ring-offset-2 ring-offset-black animate-pulse` : ''
+                                        }`}
+                                    />
+                                    <div className="flex flex-col min-w-0 flex-1">
+                                        <span className={`text-sm font-bold truncate ${
+                                            isCurrentModel ? model.theme.text : 'text-gray-200'
+                                        }`}>
+                                            {displayName}
+                                        </span>
+                                        <span className="text-xs text-gray-500 truncate font-medium">
+                                            {company}
+                                        </span>
+                                    </div>
+                                    {isCurrentModel && (
+                                        <div className={`flex items-center gap-1 text-xs font-bold ${model.theme.text}`}>
+                                            <Zap className="w-3 h-3 animate-pulse" />
+                                            <span>LIVE</span>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
 
-                <div className="flex flex-col items-center justify-center space-y-2">
-                    <div className="relative w-32 h-16">
+                <div className="flex flex-col items-center justify-center space-y-3 ml-6">
+                    <div className="relative w-24 h-12">
                         <svg className="w-full h-full" viewBox="0 0 100 50">
-                            <path d="M10 50 A 40 40 0 0 1 90 50" fill="none" stroke="#4A5568" strokeWidth="10"/>
+                            <path d="M10 50 A 40 40 0 0 1 90 50" fill="none" stroke="#475569" strokeWidth="8"/>
                             <path 
                                 d="M10 50 A 40 40 0 0 1 90 50" 
                                 fill="none" 
-                                stroke="#E2E8F0" // Whiteish color for progress
-                                strokeWidth="10"
-                                strokeDasharray={`${(turnProgress / 100) * (Math.PI * 40)} ${Math.PI * 40}`} // Circumference of semi-circle
+                                stroke="#EF4444"
+                                strokeWidth="8"
+                                strokeDasharray={`${(turnProgress / 100) * (Math.PI * 40)} ${Math.PI * 40}`}
                                 strokeLinecap="round"
+                                className="transition-all duration-500 drop-shadow-lg"
                             />
                         </svg>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center pt-8">
-                          <span className="text-3xl font-bold text-white">{turnsTaken}</span>
-                          <span className="text-xs text-gray-400 font-mono">Turn</span>
+                        <div className="absolute inset-0 flex flex-col items-center justify-center pt-6">
+                          <span className="text-2xl font-bold text-white">{turnsTaken}</span>
+                          <span className="text-xs text-gray-400 font-mono">/ {maxTurns}</span>
                         </div>
+                    </div>
+                    <div className="text-center">
+                        <p className="text-xs text-red-400 font-mono font-bold">TURN PROGRESS</p>
+                        <p className="text-sm text-white font-bold">{Math.round(turnProgress)}%</p>
                     </div>
                 </div>
               </div>
 
-                <div>
-                    <p className="font-mono text-center text-gray-300 text-lg">
-                        Time elapsed: {timeElapsed}
-                    </p>
+                <div className="border-t border-gray-700 pt-4">
+                    <div className="flex items-center justify-center gap-2 bg-gradient-to-r from-black/40 to-gray-900/40 p-3 rounded-lg backdrop-blur-sm">
+                        <Clock className="w-4 h-4 text-red-400" />
+                        <p className="font-mono text-gray-300 text-sm">
+                            Time elapsed: <span className="text-red-400 font-bold">{timeElapsed}</span>
+                        </p>
+                    </div>
                 </div>
             </CardContent>
         </Card>

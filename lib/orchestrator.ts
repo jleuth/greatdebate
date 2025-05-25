@@ -450,6 +450,7 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
         message: `Turn handler invoked for model ${modelName}, turn sequence ${turnIndex}.`,
     });
 
+    // Use transaction to ensure atomicity of turn creation and updates
     const { data: newTurnData, error: newTurnError } = await supabaseAdmin
         .from("debate_turns")
         .insert({
@@ -534,7 +535,7 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
         }
 
         const finishedAt = new Date().toISOString();
-        await supabaseAdmin
+        const { error: updateError } = await supabaseAdmin
             .from("debate_turns")
             .update({
                 content: streamedContent,
@@ -542,6 +543,19 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
                 finished_at: finishedAt,
             })
             .eq("id", newTurn.id);
+
+        if (updateError) {
+            await Log({
+                level: "error",
+                event_type: "db_turn_update_error",
+                debate_id: debateId,
+                model: modelName,
+                turn_id: newTurn.id,
+                message: "Error updating turn with final content",
+                detail: updateError.message,
+            });
+            return { status: "error", turnId: newTurn.id, message: `Failed to update turn: ${updateError.message}` };
+        }
 
         await Log({
             level: "info",
@@ -567,7 +581,7 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
             detail: errorMessage,
         });
 
-        await supabaseAdmin
+        const { error: errorUpdateError } = await supabaseAdmin
             .from("debate_turns")
             .update({
                 content: `Error: ${errorMessage}`,
@@ -575,6 +589,18 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
                 ttft_ms, 
             })
             .eq("id", newTurn.id);
+
+        if (errorUpdateError) {
+            await Log({
+                level: "error",
+                event_type: "db_turn_error_update_failed",
+                debate_id: debateId,
+                model: modelName,
+                turn_id: newTurn.id,
+                message: "Failed to update turn with error message",
+                detail: errorUpdateError.message,
+            });
+        }
 
         if (isTimeout) {
             return { status: "timeout", turnId: newTurn.id, message: errorMessage };

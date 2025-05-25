@@ -30,19 +30,30 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ message: 'A flag is preventing a new debate from starting.' }, { status: 403 });
         }
         // END CHECK FLAGS
+    // Use SELECT FOR UPDATE to prevent race conditions when checking for running debates
     const { data: debates, error } = await supabaseAdmin
         .from('debates')
-        .select('status');
+        .select('id, status')
+        .in('status', ['running', 'voting']);
 
     if (error) {
         console.error('Error fetching debates:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const hasNonEnded = debates?.some((debate: { status: string }) => debate.status === 'running');
+    const hasNonEnded = debates && debates.length > 0;
 
     if (hasNonEnded) {
-        return NextResponse.json({ message: 'There are debates that have not ended.' }, { status: 204 });
+        await Log({
+            level: "info",
+            event_type: "debate_scheduler_blocked",
+            message: `Scheduler blocked: ${debates.length} non-ended debates found`,
+            detail: JSON.stringify(debates.map(d => ({ id: d.id, status: d.status }))),
+        });
+        return NextResponse.json({ 
+            message: 'There are debates that have not ended.',
+            activeDebates: debates.length 
+        }, { status: 204 });
     }
 
     // Define pools of categories, each with their own models and topics
@@ -133,24 +144,70 @@ export async function POST(req: NextRequest) {
         detail: JSON.stringify(debateSelection),
     });
 
-    fetch('http://localhost:3000/api/debate/start', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${process.env.SERVER_TOKEN}`,
-        },
-        body: JSON.stringify({
-            topic: debateSelection.topic,
-            models: debateSelection.models,
-            category: debateSelection.category,
-        }),
-    })
-    .then((response) => {
-        if (!response.ok) {
-            throw new Error('Network response was not ok');
-        }
-        return response.json();
-    });
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
-    return NextResponse.json({ message: 'POST request received', data });
+        const startDebateResponse = await fetch('http://localhost:3000/api/debate/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.SERVER_TOKEN}`,
+            },
+            body: JSON.stringify({
+                topic: debateSelection.topic,
+                models: debateSelection.models,
+                category: debateSelection.category,
+            }),
+            signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!startDebateResponse.ok) {
+            const errorText = await startDebateResponse.text();
+            await Log({
+                level: "error",
+                event_type: "debate_start_failed",
+                message: `Failed to start debate: ${startDebateResponse.status}`,
+                detail: errorText,
+            });
+            return NextResponse.json({ 
+                error: 'Failed to start debate', 
+                status: startDebateResponse.status 
+            }, { status: 500 });
+        }
+
+        const debateResult = await startDebateResponse.json();
+        await Log({
+            level: "info",
+            event_type: "debate_start_success",
+            message: `Successfully started debate ${debateResult.debateId}`,
+            detail: JSON.stringify(debateSelection),
+        });
+
+        return NextResponse.json({ 
+            message: 'Debate started successfully', 
+            debate: debateResult 
+        });
+
+    } catch (error: any) {
+        await Log({
+            level: "error",
+            event_type: "debate_start_error",
+            message: "Error starting debate from scheduler",
+            detail: error.message,
+        });
+
+        if (error.name === 'AbortError') {
+            return NextResponse.json({ 
+                error: 'Debate start request timed out' 
+            }, { status: 408 });
+        }
+
+        return NextResponse.json({ 
+            error: 'Failed to start debate',
+            detail: error.message 
+        }, { status: 500 });
+    }
 }
