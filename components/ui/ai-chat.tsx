@@ -86,7 +86,8 @@ export const AiChatDisplay = ({
       {/* Messages */}
       <div 
         ref={containerRef} 
-        className="flex-1 overflow-y-auto p-6 space-y-3 min-h-0"
+        className="flex-1 overflow-y-auto p-6 space-y-3 min-h-0 mobile-scroll"
+        data-scrollable="true"
       >
 
         {allMessages.length === 0 ? (

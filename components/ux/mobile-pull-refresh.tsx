@@ -35,13 +35,20 @@ const MobilePullRefresh: React.FC<MobilePullRefreshProps> = ({
     if (startY === null || isRefreshing) return;
     
     const container = containerRef.current;
-    if (!container || container.scrollTop > 0) return;
+    if (!container) return;
+
+    // Check if any child element is scrolled
+    const scrollableChild = container.querySelector('.mobile-scroll, [data-scrollable]');
+    if (scrollableChild && scrollableChild.scrollTop > 0) return;
 
     const currentY = e.touches[0].clientY;
     const diff = currentY - startY;
 
     if (diff > 0) {
-      e.preventDefault();
+      // Only prevent default if we're actually pulling
+      if (diff > 10) {
+        e.preventDefault();
+      }
       const distance = Math.min(diff * 0.4, MAX_PULL);
       setPullDistance(distance);
 
@@ -78,7 +85,7 @@ const MobilePullRefresh: React.FC<MobilePullRefreshProps> = ({
   return (
     <div 
       ref={containerRef}
-      className={cn('relative overflow-hidden mobile-scroll', className)}
+      className={cn('relative h-full flex flex-col', className)}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -128,7 +135,7 @@ const MobilePullRefresh: React.FC<MobilePullRefreshProps> = ({
 
       {/* Content */}
       <div 
-        className="transition-transform duration-200"
+        className="flex-1 min-h-0 transition-transform duration-200 overflow-hidden"
         style={{
           transform: `translateY(${pullDistance > 0 ? Math.min(pullDistance, 60) : 0}px)`,
         }}

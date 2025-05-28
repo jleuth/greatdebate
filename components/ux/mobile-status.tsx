@@ -101,7 +101,7 @@ const MobileStatus: React.FC = () => {
     };
 
     return (
-        <div className="flex flex-col space-y-3 p-4 safe-area-px">
+        <div className="flex flex-col space-y-3 p-4 safe-area-px min-h-full">
             {/* Status Header - Compact */}
             <Card className="bg-gradient-to-r from-black/80 to-gray-900/80 border-gray-700/50 backdrop-blur-sm">
                 <CardContent className="p-4">

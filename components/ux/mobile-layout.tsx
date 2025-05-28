@@ -37,15 +37,19 @@ const MobileLayout: React.FC<MobileLayoutProps> = ({
     switch (activeTab) {
       case 'debate':
         return (
-          <MobilePullRefresh onRefresh={handleRefresh} className="flex-1 flex flex-col min-h-0">
-            <AIChat />
+          <MobilePullRefresh onRefresh={handleRefresh}>
+            <div className="h-full flex flex-col">
+              <AIChat />
+            </div>
           </MobilePullRefresh>
         );
         
       case 'status':
         return (
-          <MobilePullRefresh onRefresh={handleRefresh} className="flex-1 overflow-y-auto">
-            <MobileStatus />
+          <MobilePullRefresh onRefresh={handleRefresh}>
+            <div className="h-full overflow-y-auto mobile-scroll">
+              <MobileStatus />
+            </div>
           </MobilePullRefresh>
         );
         
@@ -75,8 +79,10 @@ const MobileLayout: React.FC<MobileLayoutProps> = ({
         }
         
         return (
-          <MobilePullRefresh onRefresh={handleRefresh} className="flex-1 flex flex-col min-h-0">
-            <UserChat roomName={roomName} username={username} />
+          <MobilePullRefresh onRefresh={handleRefresh}>
+            <div className="h-full flex flex-col">
+              <UserChat roomName={roomName} username={username} />
+            </div>
           </MobilePullRefresh>
         );
         
@@ -86,7 +92,7 @@ const MobileLayout: React.FC<MobileLayoutProps> = ({
   };
 
   return (
-    <div className="h-screen flex flex-col bg-gradient-to-br from-black via-gray-900 to-gray-800">
+    <div className="h-screen flex flex-col bg-gradient-to-br from-black via-gray-900 to-gray-800 overflow-hidden">
       {/* Tab Content */}
       <main className="flex-1 min-h-0 relative">
         <div className={cn(

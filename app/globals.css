@@ -153,6 +153,21 @@
   .mobile-scroll {
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
+    overflow-anchor: none;
+  }
+  
+  /* Fix iOS momentum scrolling */
+  @supports (-webkit-touch-callout: none) {
+    .mobile-scroll {
+      -webkit-overflow-scrolling: touch;
+      transform: translateZ(0);
+    }
+  }
+  
+  /* Ensure proper flex behavior on mobile */
+  .mobile-flex-fix {
+    min-height: 0;
+    flex-shrink: 0;
   }
   
   /* Mobile-optimized text selection */
