@@ -121,3 +121,63 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Mobile-specific styles */
+@layer utilities {
+  /* Safe area utilities */
+  .safe-area-px {
+    padding-left: env(safe-area-inset-left, 1rem);
+    padding-right: env(safe-area-inset-right, 1rem);
+  }
+  
+  .safe-area-pb {
+    padding-bottom: env(safe-area-inset-bottom, 0.5rem);
+  }
+  
+  .safe-area-pt {
+    padding-top: env(safe-area-inset-top, 0.5rem);
+  }
+  
+  /* Touch-friendly interactions */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  .touch-comfortable {
+    min-height: 48px;
+    min-width: 48px;
+  }
+  
+  /* Mobile scrolling improvements */
+  .mobile-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  
+  /* Mobile-optimized text selection */
+  .mobile-text {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+  }
+  
+  .mobile-text-selectable {
+    -webkit-touch-callout: default;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+  }
+  
+  /* Mobile-friendly tap highlights */
+  .tap-highlight-none {
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  .tap-highlight-red {
+    -webkit-tap-highlight-color: rgba(239, 68, 68, 0.2);
+  }
+}

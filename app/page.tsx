@@ -1,9 +1,9 @@
 'use client';
 
-import AIChat from "@/components/ux/aichat";
 import GlobalAlertBanner from "@/components/ux/globalalertbanner";
 import DebateBanner from "@/components/ux/debate-banner";
-import StatusChatTabs from "@/components/ux/status-chat-tabs";
+import MobileHeader from "@/components/ux/mobile-header";
+import ResponsiveLayout from "@/components/ux/responsive-layout";
 import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
@@ -44,23 +44,23 @@ export default function Home() {
 
   return (
     <div className="h-screen overflow-hidden bg-gradient-to-br from-black via-gray-900 to-gray-800 flex flex-col">
-      <div className='p-4 space-y-3 flex-shrink-0'>
+      {/* Desktop Header */}
+      <div className='hidden md:block p-4 space-y-3 flex-shrink-0'>
           <GlobalAlertBanner alert={flags.global_alerts} />
           <DebateBanner />
       </div>
 
-      <main className="flex-1 px-4 pb-4 flex space-x-4 min-h-0">
-        <div className="w-1/2 flex flex-col min-h-0">
-          <AIChat/>
-        </div>
-        <div className="w-1/2 flex flex-col min-h-0">
-          <StatusChatTabs 
-            enableUserChat={flags.enable_user_chat === true}
-            roomName="great-debate-room"
-            username={currentUsername}
-          />
-        </div>
-      </main>
+      {/* Mobile Header */}
+      <div className='md:hidden p-3 flex-shrink-0'>
+          <MobileHeader alert={flags.global_alerts} />
+      </div>
+
+      {/* Responsive Layout */}
+      <ResponsiveLayout 
+        enableUserChat={flags.enable_user_chat === true}
+        roomName="great-debate-room"
+        username={currentUsername}
+      />
     </div>
   );
 }
