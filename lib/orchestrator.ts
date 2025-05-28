@@ -168,8 +168,25 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
     const PAUSE_DELAY_MS = 10000; // 10s between pause checks
     let totalSkippedTurns = 0; // Counter for model timeouts
     const MAX_SKIPPED_TURNS = 3; // Max allowed timeouts before aborting debate
+    let loopIterations = 0;
+    const MAX_LOOP_ITERATIONS = maxTurns * 3; // Safety valve to prevent infinite loops
 
     while (true) {
+        loopIterations++;
+        if (loopIterations > MAX_LOOP_ITERATIONS) {
+            await Log({
+                level: "error",
+                event_type: "debate_loop_safety_exit",
+                debate_id: debateId,
+                message: `Debate loop exceeded ${MAX_LOOP_ITERATIONS} iterations, safety exit triggered`,
+            });
+            await supabaseAdmin.from("debates").update({ 
+                status: "error", 
+                ended_at: new Date().toISOString(),
+                detail: "Safety exit: too many loop iterations"
+            }).eq("id", debateId);
+            return { error: true, type: "safety_exit", message: "Loop safety limit exceeded" };
+        }
         console.log("Starting new debate loop...");
         // --- 1. CHECK FLAGS ---
         const { data: flags, error: flagerror } = await supabaseAdmin
