@@ -1,10 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import Log from '@/lib/logger';
+import { rateLimit, API_RATE_LIMITS } from '@/lib/rateLimit';
 
 const SERVER_TOKEN = process.env.SERVER_TOKEN; // VERY VERY SECRET, THIS ENSURES ONLY THE SERVER CAN SCHEDULE A DEBATE
 
 export async function POST(req: NextRequest) {
+    // Rate limiting
+    const rateLimitResult = await rateLimit(API_RATE_LIMITS.scheduler)(req);
+    if (!rateLimitResult.success) {
+        return NextResponse.json(
+            { error: 'Rate limit exceeded' },
+            { 
+                status: 429,
+                headers: {
+                    'X-RateLimit-Limit': rateLimitResult.limit.toString(),
+                    'X-RateLimit-Remaining': rateLimitResult.remaining.toString(),
+                    'X-RateLimit-Reset': new Date(rateLimitResult.reset).toISOString(),
+                }
+            }
+        );
+    }
+
     const data = await req.json();
 
         const auth = req.headers.get('authorization');
@@ -148,7 +165,8 @@ export async function POST(req: NextRequest) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
-        const startDebateResponse = await fetch('http://localhost:3000/api/debate/start', {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+        const startDebateResponse = await fetch(`${baseUrl}/api/debate/start`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

@@ -1,9 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { startDebate } from '@/lib/orchestrator';
+import { rateLimit, API_RATE_LIMITS } from '@/lib/rateLimit';
 
 const SERVER_TOKEN = process.env.SERVER_TOKEN; // VERY VERY SECRET, THIS ENSURES ONLY THE SERVER CAN START A DEBATE
 
 export async function POST(req: NextRequest) {
+    // Rate limiting
+    const rateLimitResult = await rateLimit(API_RATE_LIMITS.debateStart)(req);
+    if (!rateLimitResult.success) {
+        return NextResponse.json(
+            { error: 'Rate limit exceeded' },
+            { 
+                status: 429,
+                headers: {
+                    'X-RateLimit-Limit': rateLimitResult.limit.toString(),
+                    'X-RateLimit-Remaining': rateLimitResult.remaining.toString(),
+                    'X-RateLimit-Reset': new Date(rateLimitResult.reset).toISOString(),
+                }
+            }
+        );
+    }
+
     const auth = req.headers.get('authorization');
     if (!auth || auth !== `Bearer ${SERVER_TOKEN}`) {
         return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
