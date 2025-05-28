@@ -90,7 +90,7 @@ export const RealtimeChat = ({
   return (
     <div className="flex flex-col h-full w-full bg-gradient-to-b from-black to-gray-900 text-gray-100 antialiased">
       {/* Messages */}
-      <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
+      <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0 mobile-scroll" data-scrollable="true">
         {allMessages.length === 0 ? (
           <div className="text-center py-8">
             <div className="flex flex-col items-center gap-3">
