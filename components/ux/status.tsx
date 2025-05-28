@@ -123,13 +123,13 @@ const Status: React.FC = () => {
             </CardHeader>
             
             <CardContent className="pt-6 pb-6 space-y-6">
-              <div className='flex flex-row justify-between items-start'>
+              <div className='flex flex-row justify-between'>
                 <div className="flex-1">
                     <h3 className="font-mono text-gray-400 mb-4 text-sm flex items-center gap-2">
                         <Users className="w-4 h-4" />
                         MODELS IN PLAY:
                     </h3>
-                    <div className="space-y-3">
+                    <div className="space-y-3 w-full pr-10">
                         {modelsInPlay.map(model => {
                             const isCurrentModel = model.id === currentModelId;
                             const displayName = getModelDisplayName(model.id);
@@ -170,33 +170,43 @@ const Status: React.FC = () => {
                         })}
                     </div>
                 </div>
-
-                <div className="flex flex-col items-center justify-center space-y-3 ml-6">
-                    <div className="relative w-24 h-12">
+                
+                
+                <div className="flex flex-col items-center justify-center space-y-3">
+                    <div className="relative w-40 h-32">
                         <svg className="w-full h-full" viewBox="0 0 100 50">
-                            <path d="M10 50 A 40 40 0 0 1 90 50" fill="none" stroke="#475569" strokeWidth="8"/>
+                            <path d="M10 50 A 40 40 0 0 1 90 50" fill="none" stroke="#475569" strokeWidth="10"/>
                             <path 
                                 d="M10 50 A 40 40 0 0 1 90 50" 
                                 fill="none" 
                                 stroke="#EF4444"
-                                strokeWidth="8"
+                                strokeWidth="10"
                                 strokeDasharray={`${(turnProgress / 100) * (Math.PI * 40)} ${Math.PI * 40}`}
                                 strokeLinecap="round"
                                 className="transition-all duration-500 drop-shadow-lg"
                             />
                         </svg>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center pt-6">
-                          <span className="text-2xl font-bold text-white">{turnsTaken}</span>
-                          <span className="text-xs text-gray-400 font-mono">/ {maxTurns}</span>
+                        <div className="absolute inset-0 flex flex-col items-center justify-center pt-8">
+                          <span className="text-3xl font-bold text-white">{turnsTaken}</span>
+                          <span className="text-sm text-gray-400 font-mono">/ {maxTurns}</span>
                         </div>
                     </div>
                     <div className="text-center">
-                        <p className="text-xs text-red-400 font-mono font-bold">TURN PROGRESS</p>
-                        <p className="text-sm text-white font-bold">{Math.round(turnProgress)}%</p>
+                        <p className="text-sm text-red-400 font-mono font-bold">TURN PROGRESS</p>
+                        <p className="text-lg text-white font-bold">{Math.round(turnProgress)}%</p>
                     </div>
-                </div>
-              </div>
+                
 
+                        <div className="w-full h-px bg-gradient-to-r from-transparent via-gray-600 to-transparent my-4"></div>
+
+                        <div className="flex items-center justify-center gap-2">
+                                <Clock className="w-4 h-4 text-red-400" />
+                                <p className="font-mono text-gray-300 text-sm">
+                                    Time elapsed: <span className="text-red-400 font-bold">{timeElapsed}</span>
+                                </p>
+                        </div>
+                </div>
+            </div>
                 <div className="border-t border-gray-700 pt-4">
                     <div className="flex items-center justify-center gap-2 bg-gradient-to-r from-black/40 to-gray-900/40 p-3 rounded-lg backdrop-blur-sm">
                         <Clock className="w-4 h-4 text-red-400" />
