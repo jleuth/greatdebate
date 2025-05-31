@@ -135,25 +135,23 @@ export async function startDebate({ topic, models, category, maxTurns = 40 }: St
         throw new Error("Failed to send system message");
     }
 
-    // 2. Call runDebate to start the debate
-    try {
-        await runDebate({
-            debateId: debate.id,
-            topic,
-            models,
-            maxTurns,
-        });
-    } catch (error) {
-        await Log({
+    // 2. Start runDebate in the background (fire-and-forget)
+    runDebate({
+        debateId: debate.id,
+        topic,
+        models,
+        maxTurns,
+    }).catch(error => {
+        // Handle errors in background
+        Log({
             level: "error",
             event_type: "debate_run_error",
             debate_id: debate.id,
             message: "Debate failed at runDebate",
             detail: error instanceof Error ? error.message : String(error),
         });
-        // Log() call already exists above for this error
         console.error("Debate failed at runDebate:", error);
-    }
+    });
 
     // 3. Return the debate info so the client can display it
     return {
@@ -166,6 +164,21 @@ export async function startDebate({ topic, models, category, maxTurns = 40 }: St
 }
 
 export default async function runDebate({ debateId, topic, models, maxTurns }: RunDebateParams) {
+    await Log({
+        level: "info",
+        event_type: "run_debate_started",
+        debate_id: debateId,
+        message: `runDebate function called for debate ${debateId}`,
+        detail: `Topic: ${topic}, Models: ${models.join(", ")}, MaxTurns: ${maxTurns}`,
+    });
+
+    console.log(`[RUN_DEBATE] Starting runDebate for debate ${debateId}`, {
+        topic,
+        models,
+        maxTurns,
+        timestamp: new Date().toISOString()
+    });
+
     const PAUSE_DELAY_MS = 10000; // 10s between pause checks
     let totalSkippedTurns = 0; // Counter for model timeouts
     const MAX_SKIPPED_TURNS = 3; // Max allowed timeouts before aborting debate
@@ -189,7 +202,12 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             return { error: true, type: "safety_exit", message: "Loop safety limit exceeded" };
         }
         // Add Log for debug tracking of debate loop iterations (optional)
-        console.log("Starting new debate loop...");
+        console.log(`[DEBATE_LOOP] Starting debate loop iteration ${loopIterations} for debate ${debateId}`, {
+            debateId,
+            iteration: loopIterations,
+            timestamp: new Date().toISOString()
+        });
+        
         // --- 1. CHECK FLAGS ---
         const { data: flags, error: flagerror } = await supabaseAdmin
             .from('flags')
@@ -334,13 +352,39 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 level: "info",
                 event_type: "debate_max_turns_reached",
                 debate_id: debateId,
-                message: `Max turns (${maxTurns}) reached. Ending debate.`,
+                message: `Max turns (${maxTurns}) reached. Starting voting phase.`,
             });
-            await supabaseAdmin
-                .from("debates")
-                .update({ status: "ended", ended_at: new Date().toISOString(), detail: "Max turns reached." })
-                .eq("id", debateId);
-            return { error: false, type: "max_turns_reached", message: "Max turns reached." };
+            
+            console.log(`[VOTING] Max turns reached for debate ${debateId}, starting voting phase`, {
+                debateId,
+                maxTurns,
+                actualTurns: nonSystemTurns.length,
+                timestamp: new Date().toISOString()
+            });
+
+            // Fire-and-forget voting - let vote() handle its own errors
+            vote({
+                debateId,
+                topic,
+                models,
+            }).catch(votingError => {
+                // Log the error but don't propagate it
+                Log({
+                    level: "error",
+                    event_type: "voting_error_background",
+                    debate_id: debateId,
+                    message: "Background voting process failed",
+                    detail: votingError instanceof Error ? votingError.message : String(votingError),
+                });
+                
+                console.error(`[VOTING] Background voting failed for debate ${debateId}:`, {
+                    debateId,
+                    error: votingError instanceof Error ? votingError.message : String(votingError),
+                    timestamp: new Date().toISOString()
+                });
+            });
+            
+            return { error: false, type: "max_turns_reached", message: "Max turns reached, voting initiated." };
         }
 
         // --- 5. PREPARE TURN ---

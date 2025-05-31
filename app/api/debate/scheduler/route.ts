@@ -22,8 +22,6 @@ export async function POST(req: NextRequest) {
         );
     }
 
-    const data = await req.json();
-
         const auth = req.headers.get('authorization');
         if (!auth || auth !== `Bearer ${SERVER_TOKEN}`) {
             return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
@@ -36,6 +34,13 @@ export async function POST(req: NextRequest) {
             .single();
 
         if (flagerror) {
+            await Log({
+                level: "error",
+                event_type: "scheduler_flag_error",
+                message: "Error fetching flags in scheduler",
+                detail: flagerror.message,
+            });
+
             return NextResponse.json({ error: flagerror.message }, { status: 500 });
         }
 
@@ -44,6 +49,17 @@ export async function POST(req: NextRequest) {
             (flags?.debate_paused === true) ||
             (flags?.enable_new_debates === false)
         ) {
+            await Log({
+                level: "info",
+                event_type: "scheduler_blocked_by_flags",
+                message: "Scheduler blocked by system flags",
+                detail: {
+                    kill_switch: flags?.kill_switch_active,
+                    paused: flags?.debate_paused,
+                    new_debates_enabled: flags?.enable_new_debates
+                }
+            });
+
             return NextResponse.json({ message: 'A flag is preventing a new debate from starting.' }, { status: 403 });
         }
         // END CHECK FLAGS
@@ -54,6 +70,13 @@ export async function POST(req: NextRequest) {
         .in('status', ['running', 'voting']);
 
     if (error) {
+        await Log({
+            level: "error",
+            event_type: "scheduler_debate_check_error",
+            message: "Error checking for active debates",
+            detail: error.message,
+        });
+
         console.error('Error fetching debates:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
@@ -67,165 +90,269 @@ export async function POST(req: NextRequest) {
             message: `Scheduler blocked: ${debates.length} non-ended debates found`,
             detail: JSON.stringify(debates.map(d => ({ id: d.id, status: d.status }))),
         });
+
+        console.log(`[SCHEDULER] Blocked: ${debates.length} active debates found`, {
+            activeDebates: debates.map(d => ({ id: d.id, status: d.status })),
+            timestamp: new Date().toISOString()
+        });
+
         return NextResponse.json({ 
             message: 'There are debates that have not ended.',
             activeDebates: debates.length 
         }, { status: 204 });
     }
 
-    // Define pools of categories, each with their own models and topics
+    // Database-driven topic and model selection
+    async function pickDebateFromDatabase() {
+        // Get all active categories
+        const { data: categories, error: categoriesError } = await supabaseAdmin
+            .from('debate_categories')
+            .select('id, name, description')
+            .eq('is_active', true);
 
-    const pools = {
-        'American v. Chinese': {
-            models: ['openai/gpt-4.1', 'google/gemini-2.5-pro-preview', 'google/gemini-2.5-flash-preview', 'openai/chatgpt-4o-latest', 'anthropic/claude-sonnet-4', 'meta-llama/llama-4-maverick:free', 'qwen/qwen2.5-vl-32b-instruct:free', 'qwen/qwq-32b:free', 'deepseek/deepseek-chat:free', '01-ai/yi-large', 'deepseek/deepseek-prover-v2:free', 'qwen/qwen3-30b-a3b:free'],
-            topics: [
-                'Who will reach AGI first, America or China?',
-                'Which country leads in AI safety research, America or China?',
-                'Is American or Chinese AI policy more effective?',
-            ],
-        },
-        'Reasoning Round': {
-            models: [ 'openai/o4-mini-high', 'google/gemini-2.5-pro-preview', 'deepseek/deepseek-r1:free', 'perplexity/r1-1776', 'anthropic/claude-opus-4', 'x-ai/grok-3-beta', 'openai/o1', 'qwen/qwq-32b:free', 'microsoft/phi-4-reasoning-plus:free'],
-            topics: [
-                'Will open source or closed source AI dominate the future?',
-                'Are open source models safer than closed source models?',
-            ],
-        },
-        'SLM Smackdown': {
-            models: ['openai/gpt-4.1-nano', 'google/gemma-3n-e4b-it:free', 'google/gemini-2.0-flash-lite-001', 'mistralai/ministral-3b', 'meta-llama/llama-3.2-3b-instruct', 'amazon/nova-lite-v1', 'qwen/qwen3-4b:free'],
-            topics: [
-                'Which model is the best for reasoning tasks?',
-                'Which model is the best for creative writing?',
-            ],
-        },
-        'Open Source Showdown': {
-            models: ['meta-llama/llama-4-maverick:free', 'nvidia/llama-3.1-nemotron-ultra-253b-v1:free', 'google/gemma-3-27b-it:free', 'microsoft/phi-4-multimodal-instruct', 'qwen/qwen3-235b-a22b:free', 'deepseek/deepseek-chat:free', 'mistralai/mistral-medium-3', ],
-            topics: [
-                'Which open source model is the best for reasoning tasks?',
-                'Which open source model is the best for creative writing?',
-            ],
-        },
-        'Popularity Contest': {
-            models: ['meta-llama/llama-4-maverick:free', 'openai/gpt-4.1', 'openai/chatgpt-4o-latest', 'google/gemini-2.5-flash-preview', 'anthropic/claude-sonnet-4', 'qwen/qwen3-235b-a22b:free'],
-            topics: [
-                'Which model is the most popular among users?',
-                'Which model has the best community support?',
-            ],
-        },
-        'Comedy Hour': {
-            models: ['meta-llama/llama-4-maverick:free', 'openai/gpt-4.1', 'openai/chatgpt-4o-latest', 'google/gemini-2.5-flash-preview', 'anthropic/claude-sonnet-4', 'qwen/qwen3-235b-a22b:free'],
-            topics: [
-                'Which model can generate the funniest jokes?',
-                'Which model can create the best memes?',
-            ],
-        },
-    };
+        if (categoriesError) {
+            throw new Error(`Failed to fetch categories: ${categoriesError.message}`);
+        }
 
-    function getRandomFromArray(arr: any[]) {
-        return arr[Math.floor(Math.random() * arr.length)];
-    }
+        if (!categories || categories.length === 0) {
+            throw new Error('No active debate categories found');
+        }
 
-    function pickDebateFromPools() {
-        const categories = Object.keys(pools) as (keyof typeof pools)[];
-        const category = getRandomFromArray(categories) as keyof typeof pools;
-        const models = pools[category].models;
-        const topic = getRandomFromArray(pools[category].topics);
+        // Pick a random category
+        const selectedCategory = categories[Math.floor(Math.random() * categories.length)];
 
+        // Get topics for this category
+        const { data: topics, error: topicsError } = await supabaseAdmin
+            .from('debate_topics')
+            .select('id, topic, weight')
+            .eq('category_id', selectedCategory.id)
+            .eq('is_active', true);
+
+        if (topicsError) {
+            throw new Error(`Failed to fetch topics: ${topicsError.message}`);
+        }
+
+        if (!topics || topics.length === 0) {
+            throw new Error(`No active topics found for category: ${selectedCategory.name}`);
+        }
+
+        // Weighted random topic selection
+        const totalWeight = topics.reduce((sum, topic) => sum + topic.weight, 0);
+        let randomWeight = Math.random() * totalWeight;
+        let selectedTopic = topics[0];
+
+        for (const topic of topics) {
+            randomWeight -= topic.weight;
+            if (randomWeight <= 0) {
+                selectedTopic = topic;
+                break;
+            }
+        }
+
+        // Get models for this category
+        const { data: models, error: modelsError } = await supabaseAdmin
+            .from('debate_models')
+            .select('id, model_name, model_group, weight')
+            .eq('category_id', selectedCategory.id)
+            .eq('is_active', true);
+
+        if (modelsError) {
+            throw new Error(`Failed to fetch models: ${modelsError.message}`);
+        }
+
+        if (!models || models.length === 0) {
+            throw new Error(`No active models found for category: ${selectedCategory.name}`);
+        }
+
+        // Model selection logic based on category
         let selectedModels: string[] = [];
-        if (category === 'American v. Chinese') {
-            // Pick 2 from first 6, 2 from last 6 (if enough models)
-            const firstHalf = models.slice(0, 6);
-            const lastHalf = models.slice(-6);
-            const shuffledFirst = firstHalf.sort(() => 0.5 - Math.random());
-            const shuffledLast = lastHalf.sort(() => 0.5 - Math.random());
+
+        if (selectedCategory.name === 'American v. Chinese') {
+            // Special logic: pick 2 from american group, 2 from chinese group
+            const americanModels = models.filter(m => m.model_group === 'american');
+            const chineseModels = models.filter(m => m.model_group === 'chinese');
+
+            if (americanModels.length < 2 || chineseModels.length < 2) {
+                throw new Error('Insufficient American or Chinese models for balanced selection');
+            }
+
+            const shuffledAmerican = americanModels.sort(() => 0.5 - Math.random());
+            const shuffledChinese = chineseModels.sort(() => 0.5 - Math.random());
+
             selectedModels = [
-                ...shuffledFirst.slice(0, 2),
-                ...shuffledLast.slice(0, 2)
+                ...shuffledAmerican.slice(0, 2).map(m => m.model_name),
+                ...shuffledChinese.slice(0, 2).map(m => m.model_name)
             ];
         } else {
-            // Pick 4 random models
-            const shuffledModels = models.sort(() => 0.5 - Math.random());
-            selectedModels = shuffledModels.slice(0, 4);
+            // Regular logic: pick 4 random models with weighted selection
+            const availableModels = [...models];
+            
+            for (let i = 0; i < 4 && availableModels.length > 0; i++) {
+                const totalWeight = availableModels.reduce((sum, model) => sum + model.weight, 0);
+                let randomWeight = Math.random() * totalWeight;
+                let selectedIndex = 0;
+
+                for (let j = 0; j < availableModels.length; j++) {
+                    randomWeight -= availableModels[j].weight;
+                    if (randomWeight <= 0) {
+                        selectedIndex = j;
+                        break;
+                    }
+                }
+
+                selectedModels.push(availableModels[selectedIndex].model_name);
+                availableModels.splice(selectedIndex, 1); // Remove to avoid duplicates
+            }
+
+            // If we need more models and ran out, fall back to simple random selection
+            while (selectedModels.length < 4 && models.length >= 4) {
+                const shuffledModels = models.sort(() => 0.5 - Math.random());
+                selectedModels = shuffledModels.slice(0, 4).map(m => m.model_name);
+                break;
+            }
         }
-        return { category, topic, models: selectedModels };
+
+        if (selectedModels.length < 4) {
+            throw new Error(`Insufficient models selected: ${selectedModels.length}/4`);
+        }
+
+        return {
+            category: selectedCategory.name,
+            topic: selectedTopic.topic,
+            models: selectedModels,
+            categoryId: selectedCategory.id,
+            topicId: selectedTopic.id
+        };
     }
 
-    const debateSelection = pickDebateFromPools();
-
-
-    // Log the selected debate configuration
-    await Log({
-        level: "info",
-        event_type: "debate_scheduler_selection",
-        message: `Selected debate`,
-        detail: JSON.stringify(debateSelection),
-    });
-
     try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+        const debateSelection = await pickDebateFromDatabase();
 
-        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-        const startDebateResponse = await fetch(`${baseUrl}/api/debate/start`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${process.env.SERVER_TOKEN}`,
-            },
-            body: JSON.stringify({
-                topic: debateSelection.topic,
-                models: debateSelection.models,
-                category: debateSelection.category,
-            }),
-            signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!startDebateResponse.ok) {
-            const errorText = await startDebateResponse.text();
-            await Log({
-                level: "error",
-                event_type: "debate_start_failed",
-                message: `Failed to start debate: ${startDebateResponse.status}`,
-                detail: errorText,
-            });
-            return NextResponse.json({ 
-                error: 'Failed to start debate', 
-                status: startDebateResponse.status 
-            }, { status: 500 });
-        }
-
-        const debateResult = await startDebateResponse.json();
+        // Log the selected debate configuration
         await Log({
             level: "info",
-            event_type: "debate_start_success",
-            message: `Successfully started debate ${debateResult.debateId}`,
+            event_type: "debate_scheduler_selection",
+            message: `Selected debate from database`,
             detail: JSON.stringify(debateSelection),
         });
 
-        return NextResponse.json({ 
-            message: 'Debate started successfully', 
-            debate: debateResult 
+        console.log('[SCHEDULER] Selected debate configuration:', {
+            category: debateSelection.category,
+            topic: debateSelection.topic,
+            models: debateSelection.models,
+            categoryId: debateSelection.categoryId,
+            topicId: debateSelection.topicId,
+            timestamp: new Date().toISOString()
         });
 
-    } catch (error: any) {
-        await Log({
-            level: "error",
-            event_type: "debate_start_error",
-            message: "Error starting debate from scheduler",
-            detail: error.message,
-        });
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
-        if (error.name === 'AbortError') {
+            const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+            const startDebateResponse = await fetch(`${baseUrl}/api/debate/start`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${process.env.SERVER_TOKEN}`,
+                },
+                body: JSON.stringify({
+                    topic: debateSelection.topic,
+                    models: debateSelection.models,
+                    category: debateSelection.category,
+                }),
+                signal: controller.signal,
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!startDebateResponse.ok) {
+                const errorText = await startDebateResponse.text();
+                await Log({
+                    level: "error",
+                    event_type: "debate_start_failed",
+                    message: `Failed to start debate: ${startDebateResponse.status}`,
+                    detail: errorText,
+                });
+
+                console.error('[SCHEDULER] Failed to start debate:', {
+                    status: startDebateResponse.status,
+                    error: errorText,
+                    debateSelection,
+                    timestamp: new Date().toISOString()
+                });
+
+                return NextResponse.json({ 
+                    error: 'Failed to start debate', 
+                    status: startDebateResponse.status 
+                }, { status: 500 });
+            }
+
+            const debateResult = await startDebateResponse.json();
+            await Log({
+                level: "info",
+                event_type: "debate_start_success",
+                message: `Successfully started debate ${debateResult.debateId}`,
+                detail: JSON.stringify(debateSelection),
+            });
+
+            console.log('[SCHEDULER] Successfully started debate:', {
+                debateId: debateResult.debateId,
+                category: debateSelection.category,
+                topic: debateSelection.topic,
+                models: debateSelection.models,
+                timestamp: new Date().toISOString()
+            });
+
             return NextResponse.json({ 
-                error: 'Debate start request timed out' 
-            }, { status: 408 });
+                message: 'Debate started successfully', 
+                debate: debateResult 
+            });
+
+        } catch (error: any) {
+            await Log({
+                level: "error",
+                event_type: "debate_start_error",
+                message: "Error starting debate from scheduler",
+                detail: error.message,
+            });
+
+            console.error('[SCHEDULER] Error starting debate:', {
+                error: error.message,
+                stack: error.stack,
+                debateSelection,
+                timestamp: new Date().toISOString()
+            });
+
+            if (error.name === 'AbortError') {
+                return NextResponse.json({ 
+                    error: 'Debate start request timed out' 
+                }, { status: 408 });
+            }
+
+            return NextResponse.json({ 
+                error: 'Failed to start debate',
+                detail: error.message 
+            }, { status: 500 });
         }
 
+    } catch (selectionError: any) {
+        await Log({
+            level: "error",
+            event_type: "debate_selection_error",
+            message: "Error selecting debate configuration from database",
+            detail: selectionError.message,
+        });
+
+        console.error('[SCHEDULER] Error selecting debate from database:', {
+            error: selectionError.message,
+            stack: selectionError.stack,
+            timestamp: new Date().toISOString()
+        });
+
         return NextResponse.json({ 
-            error: 'Failed to start debate',
-            detail: error.message 
+            error: 'Failed to select debate configuration',
+            detail: selectionError.message 
         }, { status: 500 });
     }
 }

@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   experimental: {
     instrumentationHook: true, // < this doesn't need to be here but it's there just in case
-  },
+  } as any,
   async headers() {
     return [
       {
