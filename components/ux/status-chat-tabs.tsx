@@ -106,7 +106,7 @@ const StatusChatTabs: React.FC<StatusChatTabsProps> = ({
           {enableUserChat && (
             <div 
               className={cn(
-                "h-full transition-all duration-300 padding",
+                "h-full transition-all p-4 duration-300 padding",
                 activeTab === 'chat' 
                   ? "opacity-100 translate-x-0" 
                   : "opacity-0 translate-x-full absolute inset-0 pointer-events-none"
