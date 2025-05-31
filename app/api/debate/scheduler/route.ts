@@ -22,8 +22,6 @@ export async function POST(req: NextRequest) {
         );
     }
 
-    const data = await req.json();
-
         const auth = req.headers.get('authorization');
         if (!auth || auth !== `Bearer ${SERVER_TOKEN}`) {
             return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });

@@ -166,6 +166,21 @@ export async function startDebate({ topic, models, category, maxTurns = 40 }: St
 }
 
 export default async function runDebate({ debateId, topic, models, maxTurns }: RunDebateParams) {
+    await Log({
+        level: "info",
+        event_type: "run_debate_started",
+        debate_id: debateId,
+        message: `runDebate function called for debate ${debateId}`,
+        detail: `Topic: ${topic}, Models: ${models.join(", ")}, MaxTurns: ${maxTurns}`,
+    });
+
+    console.log(`[RUN_DEBATE] Starting runDebate for debate ${debateId}`, {
+        topic,
+        models,
+        maxTurns,
+        timestamp: new Date().toISOString()
+    });
+
     const PAUSE_DELAY_MS = 10000; // 10s between pause checks
     let totalSkippedTurns = 0; // Counter for model timeouts
     const MAX_SKIPPED_TURNS = 3; // Max allowed timeouts before aborting debate
@@ -189,7 +204,12 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             return { error: true, type: "safety_exit", message: "Loop safety limit exceeded" };
         }
         // Add Log for debug tracking of debate loop iterations (optional)
-        console.log("Starting new debate loop...");
+        console.log(`[DEBATE_LOOP] Starting debate loop iteration ${loopIterations} for debate ${debateId}`, {
+            debateId,
+            iteration: loopIterations,
+            timestamp: new Date().toISOString()
+        });
+        
         // --- 1. CHECK FLAGS ---
         const { data: flags, error: flagerror } = await supabaseAdmin
             .from('flags')
