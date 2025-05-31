@@ -151,6 +151,7 @@ export async function startDebate({ topic, models, category, maxTurns = 40 }: St
             message: "Debate failed at runDebate",
             detail: error instanceof Error ? error.message : String(error),
         });
+        // Log() call already exists above for this error
         console.error("Debate failed at runDebate:", error);
     }
 
@@ -187,6 +188,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             }).eq("id", debateId);
             return { error: true, type: "safety_exit", message: "Loop safety limit exceeded" };
         }
+        // Add Log for debug tracking of debate loop iterations (optional)
         console.log("Starting new debate loop...");
         // --- 1. CHECK FLAGS ---
         const { data: flags, error: flagerror } = await supabaseAdmin
@@ -677,10 +679,26 @@ export async function vote({ debateId, topic, models }: VoteParams) {
         .eq("id", debateId)
         .single();
     if (debateError) {
+        await Log({
+            level: "error",
+            event_type: "voting_debate_fetch_error",
+            debate_id: debateId,
+            message: "Error fetching debate for voting",
+            detail: debateError.message,
+        });
+
         console.error("Error fetching debate:", debateError);
         throw new Error("Failed to fetch debate");
     }
     if (debate.status !== "running") {
+        await Log({
+            level: "error",
+            event_type: "voting_invalid_status",
+            debate_id: debateId,
+            message: "Attempted to vote on non-running debate",
+            detail: `Status: ${debate.status}`,
+        });
+
         console.error("Debate is not running, cannot vote");
         throw new Error("Debate is not running");
     }
@@ -718,6 +736,14 @@ export async function vote({ debateId, topic, models }: VoteParams) {
         .neq("model", "system") // Filter out system messages
         .order("turn_index", { ascending: true });
     if (turnsError) {
+        await Log({
+            level: "error",
+            event_type: "voting_turns_fetch_error",
+            debate_id: debateId,
+            message: "Error fetching turns for voting",
+            detail: turnsError.message,
+        });
+
         console.error("Error fetching turns:", turnsError);
         throw new Error("Failed to fetch turns");
     }
@@ -754,6 +780,14 @@ export async function vote({ debateId, topic, models }: VoteParams) {
 
             // If we couldn't parse a valid model name, store the raw output for debugging
             if (!votesFor) {
+                await Log({
+                    level: "warn",
+                    event_type: "model_invalid_vote",
+                    debate_id: debateId,
+                    model,
+                    message: `Model voted with invalid output: ${output.trim()}`,
+                });
+
                 console.warn(`Model ${model} voted with an invalid output: "${output.trim()}""`);
                 votesFor = "invalid_vote";
             }
@@ -935,6 +969,12 @@ export async function checkForStaleDebates() {
     const STALE_TIMEOUT_MINUTES = 15; // Consider debates stale after 15 minutes of inactivity
     const staleThreshold = new Date(Date.now() - STALE_TIMEOUT_MINUTES * 60 * 1000).toISOString();
 
+    await Log({
+        level: "info",
+        event_type: "stale_debate_check_start",
+        message: "Checking for stale debates on server startup",
+    });
+
     console.log('[STALE CHECK] Checking for stale debates on server startup', {
         staleTimeoutMinutes: STALE_TIMEOUT_MINUTES,
         staleThreshold,
@@ -949,6 +989,13 @@ export async function checkForStaleDebates() {
         .lt("last_activity_at", staleThreshold);
 
     if (debateError) {
+        await Log({
+            level: "error",
+            event_type: "stale_debate_check_error",
+            message: "Error checking for stale debates",
+            detail: debateError.message,
+        });
+
         console.error('[STALE CHECK ERROR] Error checking for stale debates:', {
             error: debateError.message,
             code: debateError.code,
@@ -965,12 +1012,24 @@ export async function checkForStaleDebates() {
     });
 
     if (!staleDebates || staleDebates.length === 0) {
+        await Log({
+            level: "info",
+            event_type: "no_stale_debates",
+            message: "No stale debates found",
+        });
+
         console.log('[STALE CHECK] No stale debates found', {
             staleThreshold,
             timestamp: new Date().toISOString()
         });
         return { error: false, message: "No stale debates found" };
     }
+
+    await Log({
+        level: "warn",
+        event_type: "stale_debates_found",
+        message: `Found ${staleDebates.length} stale debate(s): ${staleDebates.map(d => d.id).join(", ")}`,
+    });
 
     console.warn(`[STALE DEBATES FOUND] Found ${staleDebates.length} stale debate(s): ${staleDebates.map(d => d.id).join(", ")}`, {
         staleDebates: staleDebates.map(d => ({
@@ -1003,6 +1062,14 @@ export async function checkForStaleDebates() {
         try {
             const resumeResult = await resumeStaleDebate(debate);
             if (resumeResult.error) {
+                await Log({
+                    level: "error",
+                    event_type: "resume_stale_debate_failed",
+                    debate_id: debate.id,
+                    message: `Failed to resume stale debate ${debate.id}`,
+                    detail: resumeResult.message,
+                });
+
                 console.error(`[RESUME FAILED] Failed to resume stale debate ${debate.id}:`, {
                     debateId: debate.id,
                     error: resumeResult.message,
@@ -1011,6 +1078,13 @@ export async function checkForStaleDebates() {
                 });
                 failedResumes.push({ debateId: debate.id, error: resumeResult.message });
             } else {
+                await Log({
+                    level: "info",
+                    event_type: "resume_stale_debate_success",
+                    debate_id: debate.id,
+                    message: `Successfully initiated resume for stale debate ${debate.id}`,
+                });
+
                 console.log(`[RESUME SUCCESS] Successfully initiated resume for stale debate ${debate.id}`, {
                     debateId: debate.id,
                     status: debate.status,
@@ -1048,6 +1122,14 @@ export async function checkForStaleDebates() {
 }
 
 async function resumeStaleDebate(debate: any) {
+    await Log({
+        level: "info",
+        event_type: "resume_stale_debate_attempt",
+        debate_id: debate.id,
+        message: `Attempting to resume stale debate: ${debate.id}`,
+        detail: `Topic: ${debate.topic}, Last activity: ${debate.last_activity_at}`,
+    });
+
     console.log(`[RESUME ATTEMPT] Attempting to resume stale debate: ${debate.id}`, {
         debateId: debate.id,
         topic: debate.topic,
@@ -1067,7 +1149,7 @@ async function resumeStaleDebate(debate: any) {
             debate_id: debate.id,
             model: "system",
             turn_index: -1,
-            content: "⚠️ This debate was resumed after a server interruption. Continuing from where it left off...",
+            content: "This debate was resumed after a server interruption. Continuing from where it left off...",
             tokens: 0,
             ttft_ms: null,
             started_at: new Date().toISOString(),
@@ -1136,6 +1218,13 @@ async function resumeStaleDebate(debate: any) {
                     maxTurns: 40, // Default max turns - could be made configurable
                 });
 
+                await Log({
+                    level: "info",
+                    event_type: "stale_debate_resumed_success",
+                    debate_id: debate.id,
+                    message: `Successfully resumed running debate: ${debate.id}`,
+                });
+
                 console.log(`[RESUME SUCCESS] Successfully resumed running debate: ${debate.id}`, {
                     debateId: debate.id,
                     resumeType: "running_debate",
@@ -1144,6 +1233,14 @@ async function resumeStaleDebate(debate: any) {
 
                 return { error: false, message: "Debate resumed successfully" };
             } catch (error) {
+                await Log({
+                    level: "error",
+                    event_type: "stale_debate_resume_failed",
+                    debate_id: debate.id,
+                    message: "Failed to resume running debate",
+                    detail: error instanceof Error ? error.message : String(error),
+                });
+
                 console.error(`[RESUME FAILED] Failed to resume running debate ${debate.id}:`, {
                     debateId: debate.id,
                     error: error instanceof Error ? error.message : String(error),
@@ -1189,6 +1286,13 @@ async function resumeStaleDebate(debate: any) {
                     models,
                 });
 
+                await Log({
+                    level: "info",
+                    event_type: "stale_voting_resumed_success",
+                    debate_id: debate.id,
+                    message: `Successfully resumed voting for debate: ${debate.id}`,
+                });
+
                 console.log(`[RESUME SUCCESS] Successfully resumed voting for debate: ${debate.id}`, {
                     debateId: debate.id,
                     resumeType: "voting_process",
@@ -1197,6 +1301,14 @@ async function resumeStaleDebate(debate: any) {
 
                 return { error: false, message: "Voting resumed successfully" };
             } catch (error) {
+                await Log({
+                    level: "error",
+                    event_type: "stale_voting_resume_failed",
+                    debate_id: debate.id,
+                    message: "Failed to resume voting",
+                    detail: error instanceof Error ? error.message : String(error),
+                });
+
                 console.error(`[RESUME FAILED] Failed to resume voting for debate ${debate.id}:`, {
                     debateId: debate.id,
                     error: error instanceof Error ? error.message : String(error),
@@ -1227,6 +1339,14 @@ async function resumeStaleDebate(debate: any) {
                 return { error: true, message: "Failed to resume voting" };
             }
         } else {
+            await Log({
+                level: "error",
+                event_type: "resume_unknown_status",
+                debate_id: debate.id,
+                message: "Cannot resume debate with unknown status",
+                detail: `Status: ${debate.status}`,
+            });
+
             console.error(`[RESUME ERROR] Cannot resume debate with unknown status: ${debate.status}`, {
                 debateId: debate.id,
                 status: debate.status,
