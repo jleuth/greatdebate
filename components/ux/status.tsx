@@ -207,14 +207,6 @@ const Status: React.FC = () => {
                         </div>
                 </div>
             </div>
-                <div className="border-t border-gray-700 pt-4">
-                    <div className="flex items-center justify-center gap-2 bg-gradient-to-r from-black/40 to-gray-900/40 p-3 rounded-lg backdrop-blur-sm">
-                        <Clock className="w-4 h-4 text-red-400" />
-                        <p className="font-mono text-gray-300 text-sm">
-                            Time elapsed: <span className="text-red-400 font-bold">{timeElapsed}</span>
-                        </p>
-                    </div>
-                </div>
             </CardContent>
         </Card>
     );

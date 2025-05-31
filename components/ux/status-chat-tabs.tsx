@@ -94,7 +94,7 @@ const StatusChatTabs: React.FC<StatusChatTabsProps> = ({
               "h-full flex flex-col p-4 transition-all duration-300",
               activeTab === 'status' 
                 ? "opacity-100 translate-x-0" 
-                : "opacity-0 translate-x-full absolute inset-0 pointer-events-none"
+                : "opacity-0 -translate-x-full absolute inset-0 pointer-events-none"
             )}
           >
             <div className="flex-1">
@@ -106,10 +106,10 @@ const StatusChatTabs: React.FC<StatusChatTabsProps> = ({
           {enableUserChat && (
             <div 
               className={cn(
-                "h-full transition-all duration-300",
+                "h-full transition-all duration-300 padding",
                 activeTab === 'chat' 
                   ? "opacity-100 translate-x-0" 
-                  : "opacity-0 -translate-x-full absolute inset-0 pointer-events-none"
+                  : "opacity-0 translate-x-full absolute inset-0 pointer-events-none"
               )}
             >
               <UserChat roomName={roomName} username={username} />
@@ -123,7 +123,7 @@ const StatusChatTabs: React.FC<StatusChatTabsProps> = ({
                 "h-full flex items-center justify-center p-8 transition-all duration-300",
                 activeTab === 'chat' 
                   ? "opacity-100 translate-x-0" 
-                  : "opacity-0 -translate-x-full absolute inset-0 pointer-events-none"
+                  : "opacity-0 translate-x-full absolute inset-0 pointer-events-none"
               )}
             >
               <div className="text-center">
