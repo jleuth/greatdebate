@@ -931,3 +931,318 @@ export async function vote({ debateId, topic, models }: VoteParams) {
     };
 }
 
+export async function checkForStaleDebates() {
+    const STALE_TIMEOUT_MINUTES = 15; // Consider debates stale after 15 minutes of inactivity
+    const staleThreshold = new Date(Date.now() - STALE_TIMEOUT_MINUTES * 60 * 1000).toISOString();
+
+    console.log('[STALE CHECK] Checking for stale debates on server startup', {
+        staleTimeoutMinutes: STALE_TIMEOUT_MINUTES,
+        staleThreshold,
+        currentTime: new Date().toISOString()
+    });
+
+    // Find debates that are still "running" or "voting" but haven't had activity recently
+    const { data: staleDebates, error: debateError } = await supabaseAdmin
+        .from("debates")
+        .select("*")
+        .in("status", ["running", "voting"])
+        .lt("last_activity_at", staleThreshold);
+
+    if (debateError) {
+        console.error('[STALE CHECK ERROR] Error checking for stale debates:', {
+            error: debateError.message,
+            code: debateError.code,
+            staleThreshold,
+            timestamp: new Date().toISOString()
+        });
+        return { error: true, message: "Failed to check for stale debates" };
+    }
+
+    console.log(`[STALE CHECK] Stale debate query completed, found ${staleDebates?.length || 0} potential stale debates`, {
+        debatesFound: staleDebates?.length || 0,
+        staleThreshold,
+        timestamp: new Date().toISOString()
+    });
+
+    if (!staleDebates || staleDebates.length === 0) {
+        console.log('[STALE CHECK] No stale debates found', {
+            staleThreshold,
+            timestamp: new Date().toISOString()
+        });
+        return { error: false, message: "No stale debates found" };
+    }
+
+    console.warn(`[STALE DEBATES FOUND] Found ${staleDebates.length} stale debate(s): ${staleDebates.map(d => d.id).join(", ")}`, {
+        staleDebates: staleDebates.map(d => ({
+            id: d.id,
+            topic: d.topic,
+            status: d.status,
+            lastActivity: d.last_activity_at,
+            currentModel: d.current_model,
+            currentTurn: d.current_turn_idx
+        })),
+        staleThreshold,
+        timestamp: new Date().toISOString()
+    });
+
+    // Attempt to resume each stale debate
+    const resumedDebates = [];
+    const failedResumes = [];
+
+    for (const debate of staleDebates) {
+        console.log(`[PROCESSING STALE] Processing stale debate ${debate.id}`, {
+            debateId: debate.id,
+            topic: debate.topic,
+            status: debate.status,
+            lastActivity: debate.last_activity_at,
+            currentModel: debate.current_model,
+            currentTurn: debate.current_turn_idx,
+            timeSinceLastActivity: new Date().getTime() - new Date(debate.last_activity_at).getTime()
+        });
+
+        try {
+            const resumeResult = await resumeStaleDebate(debate);
+            if (resumeResult.error) {
+                console.error(`[RESUME FAILED] Failed to resume stale debate ${debate.id}:`, {
+                    debateId: debate.id,
+                    error: resumeResult.message,
+                    status: debate.status,
+                    timestamp: new Date().toISOString()
+                });
+                failedResumes.push({ debateId: debate.id, error: resumeResult.message });
+            } else {
+                console.log(`[RESUME SUCCESS] Successfully initiated resume for stale debate ${debate.id}`, {
+                    debateId: debate.id,
+                    status: debate.status,
+                    timestamp: new Date().toISOString()
+                });
+                resumedDebates.push(debate.id);
+            }
+        } catch (error) {
+            console.error(`[RESUME EXCEPTION] Exception while resuming stale debate ${debate.id}:`, {
+                debateId: debate.id,
+                error: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+                status: debate.status,
+                timestamp: new Date().toISOString()
+            });
+            failedResumes.push({ debateId: debate.id, error: "Exception during resume" });
+        }
+    }
+
+    console.log(`[STALE CHECK COMPLETE] Stale debate check complete. Resumed: ${resumedDebates.length}, Failed: ${failedResumes.length}`, {
+        totalProcessed: staleDebates.length,
+        resumed: resumedDebates,
+        failed: failedResumes,
+        resumedCount: resumedDebates.length,
+        failedCount: failedResumes.length,
+        timestamp: new Date().toISOString()
+    });
+
+    return {
+        error: false,
+        message: `Processed ${staleDebates.length} stale debates`,
+        resumed: resumedDebates,
+        failed: failedResumes
+    };
+}
+
+async function resumeStaleDebate(debate: any) {
+    console.log(`[RESUME ATTEMPT] Attempting to resume stale debate: ${debate.id}`, {
+        debateId: debate.id,
+        topic: debate.topic,
+        status: debate.status,
+        lastActivity: debate.last_activity_at,
+        currentModel: debate.current_model,
+        currentTurn: debate.current_turn_idx,
+        models: [debate.model_a, debate.model_b, debate.model_c, debate.model_d],
+        startedAt: debate.started_at,
+        timeSinceLastActivity: new Date().getTime() - new Date(debate.last_activity_at).getTime(),
+        timestamp: new Date().toISOString()
+    });
+
+    try {
+        // Send system message indicating the debate is being resumed
+        const { error: systemMessageError } = await supabaseAdmin.from("debate_turns").insert({
+            debate_id: debate.id,
+            model: "system",
+            turn_index: -1,
+            content: "⚠️ This debate was resumed after a server interruption. Continuing from where it left off...",
+            tokens: 0,
+            ttft_ms: null,
+            started_at: new Date().toISOString(),
+            finished_at: new Date().toISOString(),
+        });
+
+        if (systemMessageError) {
+            console.warn(`[RESUME WARNING] Failed to insert system message for debate resume ${debate.id}:`, {
+                error: systemMessageError.message,
+                debateId: debate.id,
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            console.log(`[RESUME] System resume message sent successfully for debate ${debate.id}`, {
+                debateId: debate.id,
+                timestamp: new Date().toISOString()
+            });
+        }
+
+        // Update last_activity_at to current time
+        const { error: updateError } = await supabaseAdmin
+            .from("debates")
+            .update({ last_activity_at: new Date().toISOString() })
+            .eq("id", debate.id);
+
+        if (updateError) {
+            console.error(`[RESUME ERROR] Failed to update last_activity_at during resume for debate ${debate.id}:`, {
+                error: updateError.message,
+                debateId: debate.id,
+                timestamp: new Date().toISOString()
+            });
+            return { error: true, message: "Failed to update debate activity timestamp" };
+        }
+
+        console.log(`[RESUME] Updated last_activity_at timestamp for resumed debate ${debate.id}`, {
+            debateId: debate.id,
+            newTimestamp: new Date().toISOString()
+        });
+
+        const models = [debate.model_a, debate.model_b, debate.model_c, debate.model_d];
+
+        console.log(`[RESUME] Resume process proceeding for debate status: ${debate.status}`, {
+            debateId: debate.id,
+            status: debate.status,
+            models: models,
+            resumeAction: debate.status === "running" ? "resume_debate_loop" : "resume_voting_process",
+            timestamp: new Date().toISOString()
+        });
+
+        if (debate.status === "running") {
+            // Resume the debate loop
+            console.log(`[RESUME RUNNING] Starting resume process for running debate ${debate.id}`, {
+                debateId: debate.id,
+                topic: debate.topic,
+                models: models,
+                currentTurn: debate.current_turn_idx,
+                currentModel: debate.current_model,
+                timestamp: new Date().toISOString()
+            });
+
+            try {
+                await runDebate({
+                    debateId: debate.id,
+                    topic: debate.topic,
+                    models,
+                    maxTurns: 40, // Default max turns - could be made configurable
+                });
+
+                console.log(`[RESUME SUCCESS] Successfully resumed running debate: ${debate.id}`, {
+                    debateId: debate.id,
+                    resumeType: "running_debate",
+                    timestamp: new Date().toISOString()
+                });
+
+                return { error: false, message: "Debate resumed successfully" };
+            } catch (error) {
+                console.error(`[RESUME FAILED] Failed to resume running debate ${debate.id}:`, {
+                    debateId: debate.id,
+                    error: error instanceof Error ? error.message : String(error),
+                    stack: error instanceof Error ? error.stack : undefined,
+                    resumeType: "running_debate",
+                    timestamp: new Date().toISOString()
+                });
+
+                // Mark debate as error if resume fails
+                const { error: markErrorError } = await supabaseAdmin
+                    .from("debates")
+                    .update({ 
+                        status: "error", 
+                        ended_at: new Date().toISOString(),
+                        detail: "Failed to resume after server restart"
+                    })
+                    .eq("id", debate.id);
+
+                if (markErrorError) {
+                    console.error(`[RESUME ERROR] Failed to mark debate as error after resume failure ${debate.id}:`, {
+                        originalError: error instanceof Error ? error.message : String(error),
+                        updateError: markErrorError.message,
+                        debateId: debate.id,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+
+                return { error: true, message: "Failed to resume running debate" };
+            }
+        } else if (debate.status === "voting") {
+            // Resume the voting process
+            console.log(`[RESUME VOTING] Starting resume process for voting debate ${debate.id}`, {
+                debateId: debate.id,
+                topic: debate.topic,
+                models: models,
+                timestamp: new Date().toISOString()
+            });
+
+            try {
+                await vote({
+                    debateId: debate.id,
+                    topic: debate.topic,
+                    models,
+                });
+
+                console.log(`[RESUME SUCCESS] Successfully resumed voting for debate: ${debate.id}`, {
+                    debateId: debate.id,
+                    resumeType: "voting_process",
+                    timestamp: new Date().toISOString()
+                });
+
+                return { error: false, message: "Voting resumed successfully" };
+            } catch (error) {
+                console.error(`[RESUME FAILED] Failed to resume voting for debate ${debate.id}:`, {
+                    debateId: debate.id,
+                    error: error instanceof Error ? error.message : String(error),
+                    stack: error instanceof Error ? error.stack : undefined,
+                    resumeType: "voting_process",
+                    timestamp: new Date().toISOString()
+                });
+
+                // Mark debate as error if voting resume fails
+                const { error: markErrorError } = await supabaseAdmin
+                    .from("debates")
+                    .update({ 
+                        status: "error", 
+                        ended_at: new Date().toISOString(),
+                        detail: "Failed to resume voting after server restart"
+                    })
+                    .eq("id", debate.id);
+
+                if (markErrorError) {
+                    console.error(`[RESUME ERROR] Failed to mark debate as error after voting resume failure ${debate.id}:`, {
+                        originalError: error instanceof Error ? error.message : String(error),
+                        updateError: markErrorError.message,
+                        debateId: debate.id,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+
+                return { error: true, message: "Failed to resume voting" };
+            }
+        } else {
+            console.error(`[RESUME ERROR] Cannot resume debate with unknown status: ${debate.status}`, {
+                debateId: debate.id,
+                status: debate.status,
+                validStatuses: ["running", "voting"],
+                timestamp: new Date().toISOString()
+            });
+            return { error: true, message: "Unknown debate status for resume" };
+        }
+    } catch (error) {
+        console.error(`[RESUME EXCEPTION] Unexpected exception during stale debate resume ${debate.id}:`, {
+            debateId: debate.id,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+            timestamp: new Date().toISOString()
+        });
+        return { error: true, message: "Unexpected error during resume" };
+    }
+}
+
