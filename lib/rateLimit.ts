@@ -19,10 +19,8 @@ export function rateLimit(config: RateLimitConfig) {
     const now = Date.now();
     const { windowMs, maxRequests } = config;
 
-    // Clean up expired entries periodically
-    if (Math.random() < 0.01) { // 1% chance to clean up
-      cleanupExpiredEntries(now);
-    }
+    // Clean up expired entries deterministically
+    cleanupExpiredEntries(now);
 
     let entry = rateLimitStore.get(key);
 
