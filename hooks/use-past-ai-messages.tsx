@@ -61,7 +61,7 @@ export function usePastAiMessages() {
     } finally {
       setIsLoading(false);
     }
-  }, [supabase]);
+  }, []); // Removed supabase from deps as it's now stable
 
   useEffect(() => {
     fetchTurns();
@@ -118,7 +118,7 @@ export function usePastAiMessages() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [supabase]);
+  }, []); // Removed supabase from deps as it's now stable
 
   return { messages, isLoading, error, refetchTurns: fetchTurns };
 }

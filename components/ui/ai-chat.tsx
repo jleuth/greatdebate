@@ -7,7 +7,7 @@ import {
   type ChatMessage,
 } from '@/hooks/use-debate-turns'
 import { useEffect, useMemo, useState } from 'react'
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@/lib/supabase/client'
 
 interface AiChatDisplayProps {
   messages?: ChatMessage[]
@@ -24,10 +24,7 @@ export const AiChatDisplay = ({
   const { containerRef, scrollToBottom } = useChatScroll();
   const [currentModel, setCurrentModel] = useState<string | null>(null);
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  const supabase = useMemo(() => createClient(), []);
 
   // Track current model
   useEffect(() => {
@@ -63,7 +60,7 @@ export const AiChatDisplay = ({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [supabase]);
+  }, []); // Removed supabase from deps as it's now stable
 
   const allMessages = useMemo(() => {
     // Remove duplicates based on message id

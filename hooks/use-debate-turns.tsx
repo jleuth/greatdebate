@@ -44,7 +44,7 @@ export function useRealtimeChat({ roomName }: UseRealtimeChatProps) {
     return () => {
       supabase.removeChannel(newChannel)
     }
-  }, [roomName, supabase])
+  }, [roomName]) // Removed supabase from deps as it's now stable
 
   return { messages, isConnected }
 }

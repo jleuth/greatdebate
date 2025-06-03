@@ -61,7 +61,7 @@ export function usePastMessages({ roomName }: UsePastMessagesProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [roomName, supabase]);
+  }, [roomName]); // Removed supabase from deps as it's now stable
 
   useEffect(() => {
     fetchMessages();

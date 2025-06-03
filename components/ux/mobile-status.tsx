@@ -1,7 +1,7 @@
 import React from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { createClient } from '@supabase/supabase-js'
-import { useEffect, useState } from 'react';
+import { createClient } from '@/lib/supabase/client'
+import { useEffect, useState, useMemo } from 'react';
 import { getModelTheme, getModelDisplayName, getModelCompany } from '@/lib/model-colors';
 import { Clock, Users, Zap, ChevronRight } from 'lucide-react';
 import { triggerHaptic } from '@/lib/mobile-utils';
@@ -21,10 +21,7 @@ const formatTimeElapsed = (startTime: string | undefined): string => {
 };
 
 const MobileStatus: React.FC = () => {
-    const supabase = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
+    const supabase = useMemo(() => createClient(), []);
 
     const [debates, setDebate] = useState<{ [key: string]: any }>({});
     const [timeElapsed, setTimeElapsed] = useState<string>('0m 0s');

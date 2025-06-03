@@ -108,7 +108,7 @@ export function useRealtimeChat({ roomName, username }: UseRealtimeChatProps) {
     return () => {
       supabase.removeChannel(newChannel)
     }
-  }, [roomName, supabase, bannedWordsList]) // Added bannedWordsList to ensure re-subscription if list changes (though unlikely here)
+  }, [roomName, bannedWordsList]) // Removed supabase from deps as it's now stable
 
   const sendMessage = useCallback(
     async (content: string) => {

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase/client';
 import { Card, CardContent } from '@/components/ui/card';
 import { Sparkles, Trophy, Clock, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -12,14 +12,7 @@ interface MobileHeaderProps {
 }
 
 const MobileHeader: React.FC<MobileHeaderProps> = ({ alert }) => {
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  );
+  const supabase = useMemo(() => createClient(), []);
 
   const [debateInfo, setDebateInfo] = useState<{
     topic: string;
@@ -77,7 +70,7 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({ alert }) => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [supabase]);
+  }, []); // Removed supabase from deps as it's now stable
 
   const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
