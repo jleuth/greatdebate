@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "./supabaseAdmin";
 import Log from "./logger";
 import { openrouterStream } from "./openRouter";
-import { constructPrompt, constructVotingPrompt } from "./constructPrompt";
+import { constructPrompt, constructVotingPrompt, getDebateSystemPrompt } from "./constructPrompt";
 
 type StartDebateParams = {
     topic: string;
@@ -180,10 +180,19 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
     });
 
     const PAUSE_DELAY_MS = 10000; // 10s between pause checks
+    const TURN_DELAY_MS = 8000; // 8 seconds between turns for better pacing
+    const FIRST_TURN_DELAY_MS = 3000; // 3 seconds before first turn starts
     let totalSkippedTurns = 0; // Counter for model timeouts
     const MAX_SKIPPED_TURNS = 3; // Max allowed timeouts before aborting debate
     let loopIterations = 0;
     const MAX_LOOP_ITERATIONS = maxTurns * 3; // Safety valve to prevent infinite loops
+
+    // Small delay before starting the first turn to let users see the debate has begun
+    console.log(`[DEBATE_PACING] Starting debate with ${FIRST_TURN_DELAY_MS}ms initial delay`, {
+        debateId,
+        timestamp: new Date().toISOString()
+    });
+    await new Promise(resolve => setTimeout(resolve, FIRST_TURN_DELAY_MS));
 
     while (true) {
         loopIterations++;
@@ -427,7 +436,8 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
         const prompt = constructPrompt({
             topic,
             turns: adaptedTurns,
-            systemPrompt: modelRole,
+            actualTurnIndex,
+            systemPrompt: getDebateSystemPrompt(modelName),
             nextModelName: modelName
         });
 
@@ -521,6 +531,16 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 last_activity_at: new Date().toISOString(),
             })
             .eq("id", debateId);
+
+        // --- 7. TURN PACING ---
+        // Delay before the next turn to control debate pacing
+        console.log(`[DEBATE_PACING] Delaying for ${TURN_DELAY_MS}ms before next turn`, {
+            debateId,
+            currentTurn: actualTurnIndex,
+            nextModel: nextModelToPlay,
+            timestamp: new Date().toISOString()
+        });
+        await new Promise(resolve => setTimeout(resolve, TURN_DELAY_MS));
     }
 }
 
@@ -531,7 +551,6 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
         event_type: "turn_handler_invoked",
         debate_id: debateId,
         model: modelName,
-        // turn_index: turnIndex, // Keep for sequential understanding if needed, but turn_id is primary key
         message: `Turn handler invoked for model ${modelName}, turn sequence ${turnIndex}.`,
     });
 
@@ -541,7 +560,7 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
         .insert({
             debate_id: debateId,
             model: modelName,
-            turn_index: turnIndex, // Store the sequential turn index
+            turn_index: turnIndex,
             content: "", 
             tokens: 0,
             ttft_ms: null,
@@ -557,7 +576,6 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
             event_type: "db_turn_create_error",
             debate_id: debateId,
             model: modelName,
-            // turn_index: turnIndex,
             message: "Error creating new turn record in database",
             detail: newTurnError.message,
         });
@@ -573,7 +591,31 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
     let firstTokenReceived = false;
 
     try {
-        const generator = openrouterStream({ model: modelName, messages });
+        // Use the streaming API endpoint instead of calling openrouterStream directly
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+        const response = await fetch(`${baseUrl}/api/debate/stream`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.SERVER_TOKEN}`,
+            },
+            body: JSON.stringify({
+                model: modelName,
+                messages: messages
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Stream API responded with status: ${response.status}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+            throw new Error('No response body reader available');
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = '';
 
         const timeoutPromise = new Promise<never>((_, reject) =>
             setTimeout(() => {
@@ -584,16 +626,61 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
         );
 
         const streamProcessor = async () => {
-            for await (const chunk of generator) {
-                if (!firstTokenReceived) {
-                    firstTokenReceived = true;
-                    ttft_ms = Date.now() - turnStartTime;
-                    await supabaseAdmin
-                        .from("debate_turns")
-                        .update({ ttft_ms })
-                        .eq("id", newTurn.id);
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    
+                    // Process complete lines
+                    while (true) {
+                        const lineEnd = buffer.indexOf('\n\n');
+                        if (lineEnd === -1) break;
+
+                        const line = buffer.slice(0, lineEnd).trim();
+                        buffer = buffer.slice(lineEnd + 2);
+
+                        if (!line || !line.startsWith('data: ')) continue;
+                        
+                        const data = line.slice(6);
+                        if (data === '[DONE]') return;
+
+                        try {
+                            const parsed = JSON.parse(data);
+                            if (parsed.error) {
+                                throw new Error(parsed.error);
+                            }
+                            
+                            const content = parsed.content;
+                            if (content) {
+                                if (!firstTokenReceived) {
+                                    firstTokenReceived = true;
+                                    ttft_ms = Date.now() - turnStartTime;
+                                    await supabaseAdmin
+                                        .from("debate_turns")
+                                        .update({ 
+                                            ttft_ms,
+                                            content: content // Start updating content immediately
+                                        })
+                                        .eq("id", newTurn.id);
+                                }
+                                streamedContent += content;
+                                
+                                // Update content in real-time for streaming display
+                                await supabaseAdmin
+                                    .from("debate_turns")
+                                    .update({ content: streamedContent })
+                                    .eq("id", newTurn.id);
+                            }
+                        } catch (parseError) {
+                            // Ignore JSON parse errors for malformed chunks
+                            console.warn('Failed to parse streaming chunk:', line);
+                        }
+                    }
                 }
-                streamedContent += chunk;
+            } finally {
+                reader.cancel();
             }
         };
 
@@ -1032,7 +1119,7 @@ export async function vote({ debateId, topic, models }: VoteParams) {
 }
 
 export async function checkForStaleDebates() {
-    const STALE_TIMEOUT_MINUTES = 15; // Consider debates stale after 15 minutes of inactivity
+    const STALE_TIMEOUT_MINUTES = 1; // Consider debates stale after 1 minutes of inactivity
     const staleThreshold = new Date(Date.now() - STALE_TIMEOUT_MINUTES * 60 * 1000).toISOString();
 
     await Log({
