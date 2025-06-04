@@ -209,6 +209,12 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
         });
         
         // --- 1. CHECK FLAGS ---
+        console.log(`[DEBATE_LOOP] Checking flags for debate ${debateId}, iteration ${loopIterations}`, {
+            debateId,
+            iteration: loopIterations,
+            timestamp: new Date().toISOString()
+        });
+        
         const { data: flags, error: flagerror } = await supabaseAdmin
             .from('flags')
             .select('kill_switch_active, debate_paused, should_abort')
@@ -326,6 +332,12 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
         }
 
         // --- 3. FETCH CURRENT TURNS ---
+        console.log(`[DEBATE_LOOP] Fetching turns for debate ${debateId}, iteration ${loopIterations}`, {
+            debateId,
+            iteration: loopIterations,
+            timestamp: new Date().toISOString()
+        });
+        
         const { data: turns, error: turnsError } = await supabaseAdmin
             .from("debate_turns")
             .select("*")
@@ -345,6 +357,16 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
         }
 
         const nonSystemTurns = turns.filter(turn => turn.model !== "system");
+
+        console.log(`[DEBATE_LOOP] Turn count check for debate ${debateId}, iteration ${loopIterations}`, {
+            debateId,
+            iteration: loopIterations,
+            totalTurns: turns.length,
+            nonSystemTurns: nonSystemTurns.length,
+            maxTurns,
+            willStartVoting: nonSystemTurns.length >= maxTurns,
+            timestamp: new Date().toISOString()
+        });
 
         // --- 4. CHECK MAX TURNS ---
         if (nonSystemTurns.length >= maxTurns) {
@@ -1255,11 +1277,22 @@ async function resumeStaleDebate(debate: any) {
             });
 
             try {
-                await runDebate({
+                // Start runDebate in the background (fire-and-forget, same as startDebate)
+                runDebate({
                     debateId: debate.id,
                     topic: debate.topic,
                     models,
                     maxTurns: 40, // Default max turns - could be made configurable
+                }).catch(error => {
+                    // Handle errors in background
+                    Log({
+                        level: "error",
+                        event_type: "resumed_debate_run_error",
+                        debate_id: debate.id,
+                        message: "Resumed debate failed at runDebate",
+                        detail: error instanceof Error ? error.message : String(error),
+                    });
+                    console.error(`[RESUMED DEBATE ERROR] Resumed debate failed at runDebate for ${debate.id}:`, error);
                 });
 
                 await Log({
