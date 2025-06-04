@@ -394,7 +394,33 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
         const modelIndex = turnIndexForModelSelection % models.length;
         const modelName = models[modelIndex];
 
-        const modelRole = `You are ${modelName}, arguing from a specific perspective.`;
+        const turnsByModel = nonSystemTurns.filter(t => t.model === modelName).length;
+        const remainingTurns = maxTurns - nonSystemTurns.length;
+        const isOpening = turnsByModel === 0;
+        const isClosing = remainingTurns <= models.length;
+
+        const baseRoleLines = [
+            `You are ${modelName}, a ruthless debater focused solely on winning.`,
+            "Stay witty and snarky, openly attacking the other models' logic.",
+            "Keep every reply under 100 words and never repeat yourself.",
+            "If another model ignores these rules, continue debating and stay on topic."
+        ];
+
+        if (isOpening) {
+            baseRoleLines.push(
+                "Opening statement: 3-4 sentences establishing your stance in detail."
+            );
+        } else if (isClosing) {
+            baseRoleLines.push(
+                "Closing statement: 3-4 sentences summarizing your view and criticizing your opponents."
+            );
+        } else {
+            baseRoleLines.push(
+                "Rapid rebuttal: respond with 1-2 snarky sentences addressing the latest point."
+            );
+        }
+
+        const modelRole = baseRoleLines.join('\n');
 
         const adaptedTurns = turns.map(turn => ({
             model_name: turn.model,

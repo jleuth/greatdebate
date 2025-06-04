@@ -37,7 +37,7 @@ export function constructPrompt({
     // Add the current user turn request
     messages.push({
       role: "user",
-      content: `It is now your turn, ${nextModelName}. Please provide your response.`
+      content: `It is now your turn, ${nextModelName}. Respond concisely (1–2 sentences) unless this is your opening or closing statement.`
     });
 
     console.log("Constructed messages:", messages);
