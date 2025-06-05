@@ -4,6 +4,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Card, CardContent } from '@/components/ui/card';
 import { Sparkles, Trophy, Clock } from 'lucide-react';
+import { getStatusLabel } from '@/lib/status-label';
 
 interface DebateBannerProps {}
 
@@ -131,7 +132,7 @@ const DebateBanner: React.FC<DebateBannerProps> = () => {
             <div className="flex items-center gap-3 mb-3">
               {getStatusIcon(debateInfo.status)}
               <span className={`text-sm font-mono uppercase tracking-wider font-bold ${getStatusColor(debateInfo.status)}`}>
-                {debateInfo.status}
+                {getStatusLabel(debateInfo.status)}
               </span>
               <span className="text-gray-400 text-sm">•</span>
               <span className="text-gray-300 text-sm font-semibold bg-black/30 px-2 py-1 rounded-md backdrop-blur-sm">

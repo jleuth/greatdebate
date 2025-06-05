@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useEffect, useState, useMemo } from 'react';
 import { getModelTheme, getModelDisplayName, getModelCompany } from '@/lib/model-colors';
 import { Clock, Users, Zap } from 'lucide-react';
+import { getStatusLabel } from '@/lib/status-label';
 
 // Helper function to format time (you might want to move this to a utils file)
 const formatTimeElapsed = (startTime: string | undefined): string => {
@@ -114,7 +115,7 @@ const Status: React.FC = () => {
                     {getStatusIcon(debates.status)}
                     <span className="font-bold">STATUS:</span>
                     <span className={`font-bold ${getStatusColor(debates.status)} bg-black/30 px-2 py-1 rounded-md`}>
-                        {debates.status?.toUpperCase() || 'LOADING...'}
+                        {getStatusLabel(debates.status)}
                     </span>
                 </div>
             </CardHeader>
@@ -202,6 +203,25 @@ const Status: React.FC = () => {
                                     Time elapsed: <span className="text-red-400 font-bold">{timeElapsed}</span>
                                 </p>
                         </div>
+
+                        {debates.status === 'voting' && (
+                            <div className="mt-4 text-center">
+                                <p className="text-sm text-blue-400 font-mono font-bold">Voting in progress...</p>
+                            </div>
+                        )}
+
+                        {debates.status === 'ended' && (
+                            <div className="mt-4 text-center space-y-1">
+                                {debates.winner ? (
+                                    <p className="text-green-400 font-bold text-sm font-mono">Winner: {debates.winner}</p>
+                                ) : (
+                                    <p className="text-gray-400 font-mono text-sm">Debate ended with no winner</p>
+                                )}
+                                {debates.total_votes !== undefined && debates.winning_votes !== undefined && (
+                                    <p className="text-xs text-gray-500">Votes: {debates.winning_votes} / {debates.total_votes}</p>
+                                )}
+                            </div>
+                        )}
                 </div>
             </div>
             </CardContent>
