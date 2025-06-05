@@ -4,6 +4,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Card, CardContent } from '@/components/ui/card';
 import { Sparkles, Trophy, Clock, ChevronDown, ChevronUp } from 'lucide-react';
+import { getStatusLabel } from '@/lib/status-label';
 import { cn } from '@/lib/utils';
 import { triggerHaptic } from '@/lib/mobile-utils';
 
@@ -127,7 +128,7 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({ alert }) => {
                         'text-xs font-bold px-2 py-0.5 rounded-full bg-black/30',
                         getStatusColor(debateInfo.status)
                       )}>
-                        {debateInfo.status.toUpperCase()}
+                        {getStatusLabel(debateInfo.status)}
                       </span>
                     )}
                   </div>

@@ -25,6 +25,10 @@ export function usePastAiMessages() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<Error | null>(null);
 
+  const clearMessages = useCallback(() => {
+    setMessages([]);
+  }, []);
+
   const fetchTurns = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -120,5 +124,26 @@ export function usePastAiMessages() {
     };
   }, []); // Removed supabase from deps as it's now stable
 
-  return { messages, isLoading, error, refetchTurns: fetchTurns };
+  useEffect(() => {
+    const statusChannel = supabase
+      .channel('ai-chat-status')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'debates' },
+        (payload) => {
+          if (payload.new) {
+            if (payload.eventType === 'INSERT' || payload.new.status === 'ended') {
+              clearMessages();
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(statusChannel);
+    };
+  }, [clearMessages]);
+
+  return { messages, isLoading, error, refetchTurns: fetchTurns, clearMessages };
 }

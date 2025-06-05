@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useEffect, useState, useMemo } from 'react';
 import { getModelTheme, getModelDisplayName, getModelCompany } from '@/lib/model-colors';
 import { Clock, Users, Zap, ChevronRight } from 'lucide-react';
+import { getStatusLabel } from '@/lib/status-label';
 import { triggerHaptic } from '@/lib/mobile-utils';
 
 // Helper function to format time
@@ -108,7 +109,7 @@ const MobileStatus: React.FC = () => {
                             <div>
                                 <span className="text-xs font-mono text-gray-400">STATUS</span>
                                 <p className={`font-bold text-sm ${getStatusColor(debates.status)}`}>
-                                    {debates.status?.toUpperCase() || 'LOADING...'}
+                                    {getStatusLabel(debates.status)}
                                 </p>
                             </div>
                         </div>
@@ -143,6 +144,25 @@ const MobileStatus: React.FC = () => {
                             <span className="text-red-400 font-bold">{Math.round(turnProgress)}%</span>
                             <span>{maxTurns}</span>
                         </div>
+
+                        {debates.status === 'voting' && (
+                            <div className="mt-4 text-center">
+                                <p className="text-xs font-mono text-blue-400 font-bold">Voting in progress...</p>
+                            </div>
+                        )}
+
+                        {debates.status === 'ended' && (
+                            <div className="mt-4 text-center space-y-1">
+                                {debates.winner ? (
+                                    <p className="text-green-400 font-bold text-xs font-mono">Winner: {debates.winner}</p>
+                                ) : (
+                                    <p className="text-gray-400 font-mono text-xs">Debate ended with no winner</p>
+                                )}
+                                {debates.total_votes !== undefined && debates.winning_votes !== undefined && (
+                                    <p className="text-[10px] text-gray-500">Votes: {debates.winning_votes} / {debates.total_votes}</p>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </CardContent>
             </Card>
