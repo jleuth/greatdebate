@@ -45,6 +45,9 @@ Model B: “That’s why GPT-4o’s plan to legislate before it happens is naive
 Model C: “Not if we expedite the bill. Tech moves fast, but lawmakers can, too, with enough pressure.”
 Model D: “Name one time lawmakers have actually kept up, GPT-4o. The record isn’t on your side.”
 
+Motion to End Debate:
+If you believe the debate has reached its natural conclusion or you feel further discussion would be unproductive, you may end your response with the exact phrase "I motion to end debate." If ALL active models use this phrase in their most recent turns, the debate will immediately proceed to voting. Use this sparingly and only when you genuinely believe the debate has run its course.
+
 Remember:
 Pick a side, argue it boldly, and respond directly. The audience wants real, high-stakes debate. Not long-winded speeches or fence-sitting.`;
 }
@@ -79,7 +82,7 @@ export function constructPrompt({
     // Add the current user turn request with more engaging prompt
     messages.push({
       role: "user",
-      content: `It is now your turn, ${nextModelName}. Your current topic is: "${topic}". You are on turn ${actualTurnIndex || "N/A"}/40.`
+      content: `It is now your turn, ${nextModelName}. Your current topic is: "${topic}". You are on turn ${actualTurnIndex || "N/A"}/40. If you'd like to motion to end debate, please include the exact phrase "I motion to end debate" in your response.`
     });
 
     console.log("Constructed messages:", messages);

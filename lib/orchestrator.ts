@@ -38,6 +38,91 @@ type TurnHandlerResult =
     | { status: "timeout"; turnId: string; message: string } // Timeout occurred
     | { status: "error"; turnId: string | null; message: string }; // Other errors (turnId null if DB insert failed)
 
+// Function to check if all active models have motioned to end the debate
+async function checkMotionToEndDebate(debateId: string, models: string[]): Promise<{ shouldEnd: boolean; motionCount: number }> {
+    try {
+        // Get the most recent turn for each model (excluding system turns and errors)
+        const { data: recentTurns, error } = await supabaseAdmin
+            .from("debate_turns")
+            .select("model, content, turn_index")
+            .eq("debate_id", debateId)
+            .neq("model", "system")
+            .neq("content", "[Model returned empty response]")
+            .order("turn_index", { ascending: false });
+
+        if (error) {
+            await Log({
+                level: "error",
+                event_type: "motion_check_error",
+                debate_id: debateId,
+                message: "Error checking for motion to end debate",
+                detail: error.message,
+            });
+            return { shouldEnd: false, motionCount: 0 };
+        }
+
+        if (!recentTurns || recentTurns.length === 0) {
+            return { shouldEnd: false, motionCount: 0 };
+        }
+
+        // Group turns by model to get the most recent turn for each model
+        const mostRecentByModel: { [model: string]: string } = {};
+        for (const turn of recentTurns) {
+            if (!mostRecentByModel[turn.model]) {
+                mostRecentByModel[turn.model] = turn.content;
+            }
+        }
+
+        // Check how many models have the exact motion phrase in their most recent turn
+        const motionPhrase = "I motion to end debate.";
+        let motionCount = 0;
+        let modelsWithTurns = 0;
+
+        for (const model of models) {
+            if (mostRecentByModel[model]) {
+                modelsWithTurns++;
+                if (mostRecentByModel[model].includes(motionPhrase)) {
+                    motionCount++;
+                }
+            }
+        }
+
+        await Log({
+            level: "info",
+            event_type: "motion_check_result",
+            debate_id: debateId,
+            message: `Motion check: ${motionCount}/${modelsWithTurns} models have motioned`,
+            detail: JSON.stringify({
+                motionCount,
+                modelsWithTurns,
+                totalModels: models.length,
+                motionsNeeded: modelsWithTurns,
+                modelStatuses: models.map(model => ({
+                    model,
+                    hasTurn: !!mostRecentByModel[model],
+                    hasMotion: mostRecentByModel[model]?.includes(motionPhrase) || false,
+                    content: mostRecentByModel[model]?.substring(0, 100) + (mostRecentByModel[model]?.length > 100 ? '...' : '')
+                }))
+            })
+        });
+
+        // All models that have made turns must have motioned
+        const shouldEnd = modelsWithTurns > 0 && motionCount === modelsWithTurns;
+        
+        return { shouldEnd, motionCount };
+
+    } catch (error) {
+        await Log({
+            level: "error",
+            event_type: "motion_check_exception",
+            debate_id: debateId,
+            message: "Exception while checking motion to end debate",
+            detail: error instanceof Error ? error.message : String(error),
+        });
+        return { shouldEnd: false, motionCount: 0 };
+    }
+}
+
 
 export async function startDebate({ topic, models, category, maxTurns = 40 }: StartDebateParams) {
     // This function sets up debate and calls runDebate to sustain the debate
@@ -462,6 +547,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             "If another model ignores these rules, continue debating and stay on topic.",
             "If you agree with another model, feel free to join their side and defend the point you agree with.",
             "If another model convinces you, you can switch sides and debate another point.",
+            "MOTION TO END: If you believe the debate has reached its natural conclusion, you may end your response with the exact phrase 'I motion to end debate.' If ALL models use this phrase in their most recent turns, the debate immediately proceeds to voting. Use sparingly.",
         ];
 
         if (isOpening) {
@@ -581,6 +667,92 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 turn_id: turnResult.turnId ?? undefined, // Log with the actual turn ID
                 message: `Issue processing turn ${actualTurnIndex} (ID: ${turnResult.turnId}) for ${modelName}. Status: ${turnResult.status}, Detail: ${turnResult.message}`,
             });
+        }
+
+        // --- 7. CHECK FOR MOTION TO END DEBATE ---
+        // Only check if the turn was successful (we have new content)
+        if (turnResult.status === "success") {
+            const motionResult = await checkMotionToEndDebate(debateId, models);
+            
+            if (motionResult.shouldEnd) {
+                await Log({
+                    level: "info",
+                    event_type: "motion_to_end_passed",
+                    debate_id: debateId,
+                    message: `All active models (${motionResult.motionCount}) have motioned to end debate, starting voting`,
+                });
+
+                // Send system message announcing the motion passed
+                await supabaseAdmin.from("debate_turns").insert({
+                    debate_id: debateId,
+                    model: "system",
+                    turn_index: -1,
+                    content: `All models have motioned to end the debate. Proceeding to voting.`,
+                    tokens: 0,
+                    ttft_ms: null,
+                    started_at: new Date().toISOString(),
+                    finished_at: new Date().toISOString(),
+                });
+
+                // Update debate status to voting
+                await supabaseAdmin
+                    .from("debates")
+                    .update({
+                        status: "voting",
+                        last_activity_at: new Date().toISOString(),
+                    })
+                    .eq("id", debateId);
+
+                // Fire-and-forget voting - let vote() handle its own errors
+                vote({
+                    debateId,
+                    topic,
+                    models,
+                }).catch(async (votingError) => {
+                    // Log the error but don't propagate it
+                    await Log({
+                        level: "error",
+                        event_type: "voting_error_motion",
+                        debate_id: debateId,
+                        message: "Background voting process failed after motion to end",
+                        detail: votingError instanceof Error ? votingError.message : String(votingError),
+                    });
+                    
+                    console.error(`[VOTING] Motion-triggered voting failed for debate ${debateId}:`, {
+                        debateId,
+                        error: votingError instanceof Error ? votingError.message : String(votingError),
+                        timestamp: new Date().toISOString()
+                    });
+
+                    // Emergency fallback: mark debate as ended even if voting failed
+                    try {
+                        await supabaseAdmin
+                            .from("debates")
+                            .update({
+                                status: "ended",
+                                winner: "voting_failed"
+                            })
+                            .eq("id", debateId);
+                        
+                        await Log({
+                            level: "warn",
+                            event_type: "debate_ended_motion_fallback",
+                            debate_id: debateId,
+                            message: "Debate marked as ended due to voting failure after motion",
+                        });
+                    } catch (fallbackError) {
+                        await Log({
+                            level: "error",
+                            event_type: "debate_motion_fallback_failed",
+                            debate_id: debateId,
+                            message: "Failed to mark debate as ended after motion voting failure",
+                            detail: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+                        });
+                    }
+                });
+                
+                return { error: false, type: "motion_to_end", message: "All models motioned to end debate, voting initiated." };
+            }
         }
 
         const nextTurnNumberInDebate = actualTurnIndex + 1; 
