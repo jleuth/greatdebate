@@ -76,38 +76,49 @@ async function checkMotionToEndDebate(debateId: string, models: string[]): Promi
         // Check how many models have the exact motion phrase in their most recent turn
         const motionPhrase = "I motion to end debate.";
         let motionCount = 0;
-        let modelsWithTurns = 0;
+        let modelsWithValidTurns = 0;
+        let modelStatusDetails = [];
 
         for (const model of models) {
+            const modelStatus = {
+                model,
+                hasTurn: !!mostRecentByModel[model],
+                hasMotion: false,
+                content: mostRecentByModel[model]?.substring(0, 100) + (mostRecentByModel[model]?.length > 100 ? '...' : '') || 'No turns yet'
+            };
+
             if (mostRecentByModel[model]) {
-                modelsWithTurns++;
+                modelsWithValidTurns++;
                 if (mostRecentByModel[model].includes(motionPhrase)) {
                     motionCount++;
+                    modelStatus.hasMotion = true;
                 }
             }
+
+            modelStatusDetails.push(modelStatus);
         }
 
+        // STRICT REQUIREMENT: ALL models that have made valid turns must have motioned
+        // AND we must have at least majority of models with valid turns (to prevent single model from ending debate)
+        const minimumModelsRequired = Math.ceil(models.length / 2); // At least half the models
+        const allActiveModelsMotioned = modelsWithValidTurns >= minimumModelsRequired && motionCount === modelsWithValidTurns;
+        
         await Log({
             level: "info",
             event_type: "motion_check_result",
             debate_id: debateId,
-            message: `Motion check: ${motionCount}/${modelsWithTurns} models have motioned`,
+            message: `Motion check: ${motionCount}/${modelsWithValidTurns} active models have motioned (need ALL active models to motion, min ${minimumModelsRequired} active)`,
             detail: JSON.stringify({
                 motionCount,
-                modelsWithTurns,
+                modelsWithValidTurns,
                 totalModels: models.length,
-                motionsNeeded: modelsWithTurns,
-                modelStatuses: models.map(model => ({
-                    model,
-                    hasTurn: !!mostRecentByModel[model],
-                    hasMotion: mostRecentByModel[model]?.includes(motionPhrase) || false,
-                    content: mostRecentByModel[model]?.substring(0, 100) + (mostRecentByModel[model]?.length > 100 ? '...' : '')
-                }))
+                minimumModelsRequired,
+                allActiveModelsMotioned,
+                modelStatuses: modelStatusDetails
             })
         });
-
-        // All models that have made turns must have motioned
-        const shouldEnd = modelsWithTurns > 0 && motionCount === modelsWithTurns;
+        
+        const shouldEnd = allActiveModelsMotioned;
         
         return { shouldEnd, motionCount };
 
