@@ -180,7 +180,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
     });
 
     const PAUSE_DELAY_MS = 10000; // 10s between pause checks
-    const TURN_DELAY_MS = 8000; // 8 seconds between turns for better pacing
+    const TURN_DELAY_MS = 5000; // 5s seconds between turns for better pacing
     const FIRST_TURN_DELAY_MS = 3000; // 3 seconds before first turn starts
     let totalSkippedTurns = 0; // Counter for model timeouts
     const MAX_SKIPPED_TURNS = 3; // Max allowed timeouts before aborting debate
@@ -205,7 +205,6 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             });
             await supabaseAdmin.from("debates").update({ 
                 status: "error", 
-                ended_at: new Date().toISOString(),
                 detail: "Safety exit: too many loop iterations"
             }).eq("id", debateId);
             return { error: true, type: "safety_exit", message: "Loop safety limit exceeded" };
@@ -257,7 +256,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 message: "A kill/abort flag has stopped this debate.",
             });
             try {
-                await supabaseAdmin.from("debates").update({ status: "aborted", ended_at: new Date().toISOString() }).eq("id", debateId);
+                await supabaseAdmin.from("debates").update({ status: "aborted" }).eq("id", debateId);
             } catch (dbErr) {
                 await Log({
                     level: "error",
@@ -398,9 +397,9 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 debateId,
                 topic,
                 models,
-            }).catch(votingError => {
+            }).catch(async (votingError) => {
                 // Log the error but don't propagate it
-                Log({
+                await Log({
                     level: "error",
                     event_type: "voting_error_background",
                     debate_id: debateId,
@@ -413,6 +412,32 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                     error: votingError instanceof Error ? votingError.message : String(votingError),
                     timestamp: new Date().toISOString()
                 });
+
+                // Emergency fallback: mark debate as ended even if voting failed
+                try {
+                    await supabaseAdmin
+                        .from("debates")
+                        .update({
+                            status: "ended",
+                            winner: "voting_failed"
+                        })
+                        .eq("id", debateId);
+                    
+                    await Log({
+                        level: "warn",
+                        event_type: "debate_ended_fallback",
+                        debate_id: debateId,
+                        message: "Debate marked as ended due to voting failure",
+                    });
+                } catch (fallbackError) {
+                    await Log({
+                        level: "error",
+                        event_type: "debate_fallback_failed",
+                        debate_id: debateId,
+                        message: "Failed to mark debate as ended after voting failure",
+                        detail: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+                    });
+                }
             });
             
             return { error: false, type: "max_turns_reached", message: "Max turns reached, voting initiated." };
@@ -434,7 +459,9 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             `You are ${modelName}, a ruthless debater focused solely on winning.`,
             "Stay witty and snarky, openly attacking the other models' logic.",
             "Keep every reply under 100 words and never repeat yourself.",
-            "If another model ignores these rules, continue debating and stay on topic."
+            "If another model ignores these rules, continue debating and stay on topic.",
+            "If you agree with another model, feel free to join their side and defend the point you agree with.",
+            "If another model convinces you, you can switch sides and debate another point.",
         ];
 
         if (isOpening) {
@@ -463,7 +490,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             topic,
             turns: adaptedTurns,
             actualTurnIndex,
-            systemPrompt: getDebateSystemPrompt(modelName),
+            systemPrompt: modelRole,
             nextModelName: modelName
         });
 
@@ -494,7 +521,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 message: `Critical failure in turnHandler for debate ${debateId}: ${turnResult.message}. Ending debate.`,
                 detail: turnResult.message,
             });
-            await supabaseAdmin.from("debates").update({ status: "error", ended_at: new Date().toISOString(), detail: `Turn handler critical error: ${turnResult.message}` }).eq("id", debateId);
+            await supabaseAdmin.from("debates").update({ status: "error", detail: `Turn handler critical error: ${turnResult.message}` }).eq("id", debateId);
             return { error: true, type: "turn_handler_critical", message: `Critical failure: ${turnResult.message}` };
         }
 
@@ -509,6 +536,18 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 message: `Model ${modelName} timed out on turn ${actualTurnIndex} (ID: ${turnResult.turnId}). Total skipped turns: ${totalSkippedTurns}.`,
             });
 
+            // Send system message to chat about the timeout
+            await supabaseAdmin.from("debate_turns").insert({
+                debate_id: debateId,
+                model: "system",
+                turn_index: -1,
+                content: `${modelName} timed out (45 seconds) and was skipped.`,
+                tokens: 0,
+                ttft_ms: null,
+                started_at: new Date().toISOString(),
+                finished_at: new Date().toISOString(),
+            });
+
             if (totalSkippedTurns >= MAX_SKIPPED_TURNS) {
                 await Log({
                     level: "error",
@@ -518,7 +557,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 });
                 await supabaseAdmin
                     .from("debates")
-                    .update({ status: "error", ended_at: new Date().toISOString(), detail: `Aborted after ${totalSkippedTurns} model timeouts.` })
+                    .update({ status: "error", detail: `Aborted after ${totalSkippedTurns} model timeouts.` })
                     .eq("id", debateId);
                 // Send system message to chat
                 await supabaseAdmin.from("debate_turns").insert({
@@ -609,7 +648,7 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
     }
     const newTurn = newTurnData;
 
-    const FIRST_TOKEN_TIMEOUT_MS = 5 * 60 * 1000; 
+    const FIRST_TOKEN_TIMEOUT_MS = 45 * 1000; // 45 seconds 
     let ttft_ms: number | null = null;
     const turnStartTime = Date.now();
     let streamedContent = ""; 
@@ -617,100 +656,145 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
     let firstTokenReceived = false;
 
     try {
-        // Use the streaming API endpoint instead of calling openrouterStream directly
-        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-        const response = await fetch(`${baseUrl}/api/debate/stream`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${process.env.SERVER_TOKEN}`,
-            },
-            body: JSON.stringify({
-                model: modelName,
-                messages: messages
-            }),
-        });
+        // Try streaming first, fallback to direct if it fails
+        let streamingSuccess = false;
+        
+        try {
+            const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+            const response = await fetch(`${baseUrl}/api/debate/stream`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${process.env.SERVER_TOKEN}`,
+                },
+                body: JSON.stringify({
+                    model: modelName,
+                    messages: messages
+                }),
+            });
 
-        if (!response.ok) {
-            throw new Error(`Stream API responded with status: ${response.status}`);
-        }
+            if (!response.ok) {
+                throw new Error(`Stream API responded with status: ${response.status}`);
+            }
 
-        const reader = response.body?.getReader();
-        if (!reader) {
-            throw new Error('No response body reader available');
-        }
+            const reader = response.body?.getReader();
+            if (!reader) {
+                throw new Error('No response body reader available');
+            }
 
-        const decoder = new TextDecoder();
-        let buffer = '';
+            const decoder = new TextDecoder();
+            let buffer = '';
 
-        const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => {
-                if (!firstTokenReceived) {
-                    reject(new Error("First token timeout")); 
-                }
-            }, FIRST_TOKEN_TIMEOUT_MS)
-        );
+            const timeoutPromise = new Promise<never>((_, reject) =>
+                setTimeout(() => {
+                    if (!firstTokenReceived) {
+                        reject(new Error("First token timeout")); 
+                    }
+                }, FIRST_TOKEN_TIMEOUT_MS)
+            );
 
-        const streamProcessor = async () => {
-            try {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    buffer += decoder.decode(value, { stream: true });
-                    
-                    // Process complete lines
+            const streamProcessor = async () => {
+                try {
                     while (true) {
-                        const lineEnd = buffer.indexOf('\n\n');
-                        if (lineEnd === -1) break;
+                        const { done, value } = await reader.read();
+                        if (done) break;
 
-                        const line = buffer.slice(0, lineEnd).trim();
-                        buffer = buffer.slice(lineEnd + 2);
-
-                        if (!line || !line.startsWith('data: ')) continue;
+                        buffer += decoder.decode(value, { stream: true });
                         
-                        const data = line.slice(6);
-                        if (data === '[DONE]') return;
+                        // Process complete lines
+                        while (true) {
+                            const lineEnd = buffer.indexOf('\n\n');
+                            if (lineEnd === -1) break;
 
-                        try {
-                            const parsed = JSON.parse(data);
-                            if (parsed.error) {
-                                throw new Error(parsed.error);
-                            }
+                            const line = buffer.slice(0, lineEnd).trim();
+                            buffer = buffer.slice(lineEnd + 2);
+
+                            if (!line || !line.startsWith('data: ')) continue;
                             
-                            const content = parsed.content;
-                            if (content) {
-                                if (!firstTokenReceived) {
-                                    firstTokenReceived = true;
-                                    ttft_ms = Date.now() - turnStartTime;
+                            const data = line.slice(6);
+                            if (data === '[DONE]') return;
+
+                            try {
+                                const parsed = JSON.parse(data);
+                                if (parsed.error) {
+                                    throw new Error(parsed.error);
+                                }
+                                
+                                const content = parsed.content;
+                                if (content) {
+                                    if (!firstTokenReceived) {
+                                        firstTokenReceived = true;
+                                        ttft_ms = Date.now() - turnStartTime;
+                                        await supabaseAdmin
+                                            .from("debate_turns")
+                                            .update({ 
+                                                ttft_ms,
+                                                content: content // Start updating content immediately
+                                            })
+                                            .eq("id", newTurn.id);
+                                    }
+                                    streamedContent += content;
+                                    
+                                    // Update content in real-time for streaming display
                                     await supabaseAdmin
                                         .from("debate_turns")
-                                        .update({ 
-                                            ttft_ms,
-                                            content: content // Start updating content immediately
-                                        })
+                                        .update({ content: streamedContent })
                                         .eq("id", newTurn.id);
                                 }
-                                streamedContent += content;
-                                
-                                // Update content in real-time for streaming display
-                                await supabaseAdmin
-                                    .from("debate_turns")
-                                    .update({ content: streamedContent })
-                                    .eq("id", newTurn.id);
+                            } catch (parseError) {
+                                // Ignore JSON parse errors for malformed chunks
+                                console.warn('Failed to parse streaming chunk:', line);
                             }
-                        } catch (parseError) {
-                            // Ignore JSON parse errors for malformed chunks
-                            console.warn('Failed to parse streaming chunk:', line);
                         }
                     }
+                } finally {
+                    reader.cancel();
                 }
-            } finally {
-                reader.cancel();
-            }
-        };
+            };
 
-        await Promise.race([streamProcessor(), timeoutPromise]);
+            await Promise.race([streamProcessor(), timeoutPromise]);
+            streamingSuccess = true;
+            
+        } catch (streamError) {
+            await Log({
+                level: "warn",
+                event_type: "streaming_fallback_triggered",
+                debate_id: debateId,
+                model: modelName,
+                turn_id: newTurn.id,
+                message: `Streaming failed, falling back to direct API: ${streamError instanceof Error ? streamError.message : String(streamError)}`,
+            });
+            
+            // Reset state for fallback
+            streamedContent = "";
+            firstTokenReceived = false;
+            ttft_ms = null;
+            
+            // Fallback to direct openrouterStream
+            const timeoutPromise = new Promise<never>((_, reject) =>
+                setTimeout(() => {
+                    if (!firstTokenReceived) {
+                        reject(new Error("First token timeout")); 
+                    }
+                }, FIRST_TOKEN_TIMEOUT_MS)
+            );
+
+            const directStreamProcessor = async () => {
+                for await (const chunk of openrouterStream({ model: modelName, messages })) {
+                    if (!firstTokenReceived) {
+                        firstTokenReceived = true;
+                        ttft_ms = Date.now() - turnStartTime;
+                        await supabaseAdmin
+                            .from("debate_turns")
+                            .update({ ttft_ms })
+                            .eq("id", newTurn.id);
+                    }
+                    streamedContent += chunk;
+                }
+            };
+
+            await Promise.race([directStreamProcessor(), timeoutPromise]);
+        }
 
         if (!firstTokenReceived && streamedContent === "") {
             await Log({
@@ -1114,18 +1198,86 @@ export async function vote({ debateId, topic, models }: VoteParams) {
         });
     }
 
-    // Update the debate with the winner
-    await supabaseAdmin
-        .from("debates")
-        .update({
+    // Update the debate with the winner - with extensive logging
+    await Log({
+        level: "info",
+        event_type: "debate_status_update_attempt",
+        debate_id: debateId,
+        message: `Attempting to update debate status to ended`,
+        detail: JSON.stringify({
             winner,
-            status: "ended",
-            ended_at: new Date().toISOString(),
-            winning_votes: maxVotes,
-            total_votes: Object.values(votes).filter(v => models.includes(v)).length,
-            is_tie: winners.length > 1
+            maxVotes,
+            totalVotes: Object.values(votes).filter(v => models.includes(v)).length,
+            isTie: winners.length > 1,
+            votes: votes
         })
-        .eq("id", debateId);
+    });
+
+    const updateData = {
+        winner,
+        status: "ended" as const,
+        winning_votes: maxVotes,
+        total_votes: Object.values(votes).filter(v => models.includes(v)).length,
+        is_tie: winners.length > 1
+    };
+
+    console.log(`[VOTING] About to update debate ${debateId} with:`, updateData);
+
+    const { data: updateResult, error: statusUpdateError } = await supabaseAdmin
+        .from("debates")
+        .update(updateData)
+        .eq("id", debateId)
+        .select(); // Add select to see what was actually updated
+
+    console.log(`[VOTING] Update result for debate ${debateId}:`, { updateResult, error: statusUpdateError });
+
+    if (statusUpdateError) {
+        await Log({
+            level: "error",
+            event_type: "debate_status_update_error",
+            debate_id: debateId,
+            message: "Failed to update debate status to ended",
+            detail: statusUpdateError.message,
+        });
+        
+        // Try again with just the essential fields
+        console.log(`[VOTING] Retrying with minimal fields for debate ${debateId}`);
+        const { data: retryResult, error: retryError } = await supabaseAdmin
+            .from("debates")
+            .update({
+                status: "ended",
+                winner
+            })
+            .eq("id", debateId)
+            .select();
+
+        console.log(`[VOTING] Retry result for debate ${debateId}:`, { retryResult, error: retryError });
+
+        if (retryError) {
+            await Log({
+                level: "error",
+                event_type: "debate_status_retry_failed",
+                debate_id: debateId,
+                message: "Failed to update debate status even with minimal fields",
+                detail: retryError.message,
+            });
+        } else {
+            await Log({
+                level: "info",
+                event_type: "debate_status_retry_success",
+                debate_id: debateId,
+                message: "Successfully updated debate status on retry",
+            });
+        }
+    } else {
+        await Log({
+            level: "info",
+            event_type: "debate_status_update_success",
+            debate_id: debateId,
+            message: "Successfully updated debate status to ended",
+            detail: `Updated ${updateResult?.length || 0} rows`
+        });
+    }
 
 
         await Log({
@@ -1444,7 +1596,6 @@ async function resumeStaleDebate(debate: any) {
                     .from("debates")
                     .update({ 
                         status: "error", 
-                        ended_at: new Date().toISOString(),
                         detail: "Failed to resume after server restart"
                     })
                     .eq("id", debate.id);
@@ -1512,7 +1663,6 @@ async function resumeStaleDebate(debate: any) {
                     .from("debates")
                     .update({ 
                         status: "error", 
-                        ended_at: new Date().toISOString(),
                         detail: "Failed to resume voting after server restart"
                     })
                     .eq("id", debate.id);

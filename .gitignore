@@ -45,3 +45,6 @@ next-env.d.ts
 *.bak
 nuke-debates.js
 .claude
+*.sh
+debate-scheduler.timer
+debate-scheduler.service
