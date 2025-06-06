@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "./supabaseAdmin";
 import Log from "./logger";
 import { openrouterStream } from "./openRouter";
-import { constructPrompt, constructVotingPrompt, getDebateSystemPrompt } from "./constructPrompt";
+import { constructPrompt, constructVotingPrompt } from "./constructPrompt";
 
 type StartDebateParams = {
     topic: string;
@@ -310,7 +310,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
         
         const { data: flags, error: flagerror } = await supabaseAdmin
             .from('flags')
-            .select('kill_switch_active, debate_paused, should_abort')
+            .select('kill_switch_active, debate_paused, should_abort, motion_to_end_debate')
             .single();
 
         if (flagerror) {
@@ -424,7 +424,17 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             continue;
         }
 
-        // --- 3. FETCH CURRENT TURNS ---
+        // --- 3. CHECK MOTION FLAG ---
+        if (flags?.motion_to_end_debate === true) {
+            await Log({
+                level: "info",
+                event_type: "motion_flag_active",
+                debate_id: debateId,
+                message: "Motion to end debate flag is active - all models will be instructed to motion",
+            });
+        }
+
+        // --- 4. FETCH CURRENT TURNS ---
         console.log(`[DEBATE_LOOP] Fetching turns for debate ${debateId}, iteration ${loopIterations}`, {
             debateId,
             iteration: loopIterations,
@@ -461,7 +471,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             timestamp: new Date().toISOString()
         });
 
-        // --- 4. CHECK MAX TURNS ---
+        // --- 5. CHECK MAX TURNS ---
         if (nonSystemTurns.length >= maxTurns) {
             await Log({
                 level: "info",
@@ -528,43 +538,12 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             return { error: false, type: "max_turns_reached", message: "Max turns reached, voting initiated." };
         }
 
-        // --- 5. PREPARE TURN ---
+        // --- 6. PREPARE TURN ---
         const turnIndexForModelSelection = nonSystemTurns.length; // 0-indexed count of model turns so far
         const actualTurnIndex = turnIndexForModelSelection + 1; // 1-indexed actual turn number for the model
         
         const modelIndex = turnIndexForModelSelection % models.length;
         const modelName = models[modelIndex];
-
-        const turnsByModel = nonSystemTurns.filter(t => t.model === modelName).length;
-        const remainingTurns = maxTurns - nonSystemTurns.length;
-        const isOpening = turnsByModel === 0;
-        const isClosing = remainingTurns <= models.length;
-
-        const baseRoleLines = [
-            `You are ${modelName}, a ruthless debater focused solely on winning.`,
-            "Stay witty and snarky, openly attacking the other models' logic.",
-            "Keep every reply under 100 words and never repeat yourself.",
-            "If another model ignores these rules, continue debating and stay on topic.",
-            "If you agree with another model, feel free to join their side and defend the point you agree with.",
-            "If another model convinces you, you can switch sides and debate another point.",
-            "MOTION TO END: If you believe the debate has reached its natural conclusion, you may end your response with the exact phrase 'I motion to end debate.' If ALL models use this phrase in their most recent turns, the debate immediately proceeds to voting. Use sparingly.",
-        ];
-
-        if (isOpening) {
-            baseRoleLines.push(
-                "Opening statement: 3-4 sentences establishing your stance in detail."
-            );
-        } else if (isClosing) {
-            baseRoleLines.push(
-                "Closing statement: 3-4 sentences summarizing your view and criticizing your opponents."
-            );
-        } else {
-            baseRoleLines.push(
-                "Rapid rebuttal: respond with 1-2 snarky sentences addressing the latest point."
-            );
-        }
-
-        const modelRole = baseRoleLines.join('\n');
 
         const adaptedTurns = turns.map(turn => ({
             model_name: turn.model,
@@ -576,8 +555,10 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             topic,
             turns: adaptedTurns,
             actualTurnIndex,
-            systemPrompt: modelRole,
-            nextModelName: modelName
+            nextModelName: modelName,
+            models,
+            maxTurns,
+            flags
         });
 
         await Log({
@@ -589,7 +570,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             message: `Preparing turn ${actualTurnIndex} for model ${modelName}`,
         });
 
-        // --- 6. EXECUTE TURN ---
+        // --- 7. EXECUTE TURN ---
         const turnResult = await turnHandler({
             debateId,
             modelName,
@@ -669,7 +650,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             });
         }
 
-        // --- 7. CHECK FOR MOTION TO END DEBATE ---
+        // --- 8. CHECK FOR MOTION TO END DEBATE ---
         // Only check if the turn was successful (we have new content)
         if (turnResult.status === "success") {
             const motionResult = await checkMotionToEndDebate(debateId, models);
@@ -694,16 +675,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                     finished_at: new Date().toISOString(),
                 });
 
-                // Update debate status to voting
-                await supabaseAdmin
-                    .from("debates")
-                    .update({
-                        status: "voting",
-                        last_activity_at: new Date().toISOString(),
-                    })
-                    .eq("id", debateId);
-
-                // Fire-and-forget voting - let vote() handle its own errors
+                // Fire-and-forget voting - let vote() handle its own errors and status updates
                 vote({
                     debateId,
                     topic,
@@ -769,7 +741,7 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
             })
             .eq("id", debateId);
 
-        // --- 7. TURN PACING ---
+        // --- 9. TURN PACING ---
         // Delay before the next turn to control debate pacing
         console.log(`[DEBATE_PACING] Delaying for ${TURN_DELAY_MS}ms before next turn`, {
             debateId,

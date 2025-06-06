@@ -7,9 +7,68 @@ interface Turn {
 interface ConstructPromptParams {
     topic: string;
     turns: Turn[];
-    actualTurnIndex?: number; // Optional
-    systemPrompt: string;
+    actualTurnIndex?: number;
     nextModelName: string;
+    models: string[];
+    maxTurns: number;
+    flags?: {
+        motion_to_end_debate?: boolean;
+    };
+}
+
+// Comprehensive system prompt builder with all context
+function buildSystemPrompt(params: {
+    modelName: string;
+    turns: Turn[];
+    models: string[];
+    maxTurns: number;
+    flags?: { motion_to_end_debate?: boolean };
+}): string {
+    const { modelName, turns, models, maxTurns, flags } = params;
+    
+    // Calculate debate context
+    const nonSystemTurns = turns.filter(turn => turn.model_name !== "system");
+    const turnsByModel = nonSystemTurns.filter(t => t.model_name === modelName).length;
+    const remainingTurns = maxTurns - nonSystemTurns.length;
+    const isOpening = turnsByModel === 0;
+    const isClosing = remainingTurns <= models.length;
+
+    const baseInstructions = [
+        `You are ${modelName}, a ruthless debater focused solely on winning.`,
+        "Stay witty and snarky, openly attacking the other models' logic.",
+        "Keep every reply under 100 words and never repeat yourself.",
+        "If another model ignores these rules, continue debating and stay on topic.",
+        "If you agree with another model, feel free to join their side and defend the point you agree with.",
+        "If another model convinces you, you can switch sides and debate another point.",
+    ];
+
+    // Add motion instructions based on flag status
+    if (flags?.motion_to_end_debate === true) {
+        baseInstructions.push(
+            "REQUIRED MOTION: You MUST end your response with the exact phrase 'I motion to end debate.' This has been administratively requested to end the current debate and proceed to voting."
+        );
+    } else {
+        baseInstructions.push(
+            "MOTION TO END: If you believe the debate has reached its natural conclusion, you may end your response with the exact phrase 'I motion to end debate.' If ALL models use this phrase in their most recent turns, the debate immediately proceeds to voting. Use sparingly."
+        );
+    }
+
+    // Add situational instructions
+    if (isOpening) {
+        baseInstructions.push(
+            "Opening statement: 3-4 sentences establishing your stance in detail."
+        );
+    } else if (isClosing) {
+        baseInstructions.push(
+            "Closing statement: 3-4 sentences summarizing your view and criticizing your opponents."
+        );
+    } else {
+        baseInstructions.push(
+            "Rapid rebuttal: respond with 1-2 snarky sentences addressing the latest point."
+        );
+    }
+
+    return baseInstructions.join('\n');
 }
 
 // Enhanced system prompt for debate models
@@ -57,16 +116,24 @@ Pick a side, argue it boldly, and respond directly. The audience wants real, hig
 export function constructPrompt({
     topic,
     turns,
-    systemPrompt,
     nextModelName,
-    actualTurnIndex
+    actualTurnIndex,
+    models,
+    maxTurns,
+    flags
   }: ConstructPromptParams): { role: string; content: string }[] {
-    // Use enhanced debate system prompt instead of basic one
-    const enhancedSystemPrompt = systemPrompt || getDebateSystemPrompt(nextModelName);
+    // Build comprehensive system prompt with all context
+    const systemPrompt = buildSystemPrompt({
+        modelName: nextModelName,
+        turns,
+        models,
+        maxTurns,
+        flags
+    });
     
     // Compose the system prompt (single, first message)
     const messages: { role: string; content: string }[] = [
-      { role: "system", content: enhancedSystemPrompt },
+      { role: "system", content: systemPrompt },
       { role: "user", content: `Debate Topic: ${topic}` }
     ];
   
