@@ -46,13 +46,12 @@ type TurnHandlerResult =
 // Function to check if all active models have motioned to end the debate
 async function checkMotionToEndDebate(debateId: string, models: string[]): Promise<{ shouldEnd: boolean; motionCount: number }> {
     try {
-        // Get the most recent turn for each model (excluding system turns and errors)
+        // Get the most recent turn for each model (excluding system turns and all types of error responses)
         const { data: recentTurns, error } = await supabaseAdmin
             .from("debate_turns")
             .select("model, content, turn_index")
             .eq("debate_id", debateId)
             .neq("model", "system")
-            .neq("content", "[Model returned empty response]")
             .order("turn_index", { ascending: false });
 
         if (error) {
@@ -74,7 +73,14 @@ async function checkMotionToEndDebate(debateId: string, models: string[]): Promi
         const mostRecentByModel: { [model: string]: string } = {};
         for (const turn of recentTurns) {
             if (!mostRecentByModel[turn.model]) {
-                mostRecentByModel[turn.model] = turn.content;
+                // Filter out failed/error responses when determining if a model has a valid turn
+                const isValidResponse = !turn.content.startsWith("[Model returned") && 
+                                      !turn.content.startsWith("Error:") &&
+                                      turn.content.trim().length > 0;
+                
+                if (isValidResponse) {
+                    mostRecentByModel[turn.model] = turn.content;
+                }
             }
         }
 
@@ -89,7 +95,7 @@ async function checkMotionToEndDebate(debateId: string, models: string[]): Promi
                 model,
                 hasTurn: !!mostRecentByModel[model],
                 hasMotion: false,
-                content: mostRecentByModel[model]?.substring(0, 100) + (mostRecentByModel[model]?.length > 100 ? '...' : '') || 'No turns yet'
+                content: mostRecentByModel[model]?.substring(0, 100) + (mostRecentByModel[model]?.length > 100 ? '...' : '') || 'No valid turns yet'
             };
 
             if (mostRecentByModel[model]) {
@@ -357,14 +363,27 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 event_type: "flag_preventing_debate",
                 message: "A kill/abort flag has stopped this debate.",
             });
+            
+            // Send system message to chat about the flag stopping the debate
+            await supabaseAdmin.from("debate_turns").insert({
+                debate_id: debateId,
+                model: "system",
+                turn_index: -1,
+                content: "This debate has been ended by an administrative flag.",
+                tokens: 0,
+                ttft_ms: null,
+                started_at: new Date().toISOString(),
+                finished_at: new Date().toISOString(),
+            });
+            
             try {
-                await supabaseAdmin.from("debates").update({ status: "aborted" }).eq("id", debateId);
+                await supabaseAdmin.from("debates").update({ status: "ended" }).eq("id", debateId);
             } catch (dbErr) {
                 await Log({
                     level: "error",
                     event_type: "db_update_error",
                     debate_id: debateId,
-                    message: "Failed to update debate status to aborted after kill/abort flag",
+                    message: "Failed to update debate status to ended after kill/abort flag",
                     detail: dbErr instanceof Error ? dbErr.message : String(dbErr),
                 });
             }

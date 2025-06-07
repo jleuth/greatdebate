@@ -37,6 +37,22 @@ export async function* openrouterStream({
         try {
           errorMsg = await response.text();
         } catch {}
+        
+        // Check if we got a 429 (rate limit) on a free model and retry with paid version
+        if (response.status === 429 && model.includes(':free')) {
+          const paidModel = model.replace(':free', '');
+          await Log({
+            level: "warn",
+            event_type: "openrouter_free_rate_limit",
+            model,
+            message: `Free model hit rate limit, retrying with paid model: ${paidModel}`,
+          });
+          
+          // Recursively call with the paid model
+          yield* openrouterStream({ model: paidModel, messages });
+          return;
+        }
+        
         await Log({
           level: "error",
           event_type: "openrouter_api_error",
