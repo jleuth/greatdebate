@@ -3,6 +3,11 @@ import Log from "./logger";
 import { openrouterStream } from "./openRouter";
 import { constructPrompt, constructVotingPrompt } from "./constructPrompt";
 
+// Dead model detection thresholds - configurable for tuning
+const MIN_CONTENT_LENGTH = 10; // Minimum characters for valid response
+const MIN_WORD_COUNT = 3; // Minimum words for valid response
+const MAX_REPETITIVE_CHARS = 4; // Max consecutive identical characters (aaaaa = 5 chars, so 4+ triggers)
+
 type StartDebateParams = {
     topic: string;
     models: string[];
@@ -279,7 +284,8 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
     const TURN_DELAY_MS = 5000; // 5s seconds between turns for better pacing
     const FIRST_TURN_DELAY_MS = 3000; // 3 seconds before first turn starts
     let totalSkippedTurns = 0; // Counter for model timeouts
-    const MAX_SKIPPED_TURNS = 3; // Max allowed timeouts before aborting debate
+    const MAX_SKIPPED_TURNS = 3; // Max allowed timeouts/dead models before aborting debate (was 10, reduced for better QwQ handling)
+    
     let loopIterations = 0;
     const MAX_LOOP_ITERATIONS = maxTurns * 3; // Safety valve to prevent infinite loops
 
@@ -651,14 +657,72 @@ export default async function runDebate({ debateId, topic, models, maxTurns }: R
                 return { error: true, type: "debate_aborted_max_skips", message: `Debate aborted after ${totalSkippedTurns} model timeouts.` };
             }
         } else if (turnResult.status === "error") { 
-            await Log({
-                level: "warn",
-                event_type: "turn_processing_issue",
-                debate_id: debateId,
-                model: modelName,
-                turn_id: turnResult.turnId ?? undefined, // Log with the actual turn ID
-                message: `Issue processing turn ${actualTurnIndex} (ID: ${turnResult.turnId}) for ${modelName}. Status: ${turnResult.status}, Detail: ${turnResult.message}`,
-            });
+            // Enhanced dead model detection - count empty responses and low quality responses as skipped turns
+            const isDeadModel = turnResult.message.includes("empty stream") || 
+                               turnResult.message.includes("empty response") ||
+                               turnResult.message.includes("empty/insufficient content") ||
+                               turnResult.message.includes("low_quality content") ||
+                               turnResult.message.includes("no content");
+            
+            if (isDeadModel) {
+                totalSkippedTurns++;
+                await Log({
+                    level: "warn",
+                    event_type: "model_dead_response",
+                    debate_id: debateId,
+                    model: modelName,
+                    turn_id: turnResult.turnId ?? undefined,
+                    message: `Model ${modelName} returned dead/empty response on turn ${actualTurnIndex} (ID: ${turnResult.turnId}). Total skipped turns: ${totalSkippedTurns}.`,
+                    detail: turnResult.message,
+                });
+
+                // Send system message about dead model
+                await supabaseAdmin.from("debate_turns").insert({
+                    debate_id: debateId,
+                    model: "system",
+                    turn_index: -1,
+                    content: `${modelName} failed to provide content and was skipped.`,
+                    tokens: 0,
+                    ttft_ms: null,
+                    started_at: new Date().toISOString(),
+                    finished_at: new Date().toISOString(),
+                });
+
+                if (totalSkippedTurns >= MAX_SKIPPED_TURNS) {
+                    await Log({
+                        level: "error",
+                        event_type: "debate_aborted_max_skips",
+                        debate_id: debateId,
+                        message: `Debate ${debateId} aborted after ${totalSkippedTurns} model failures (timeouts + dead models).`,
+                    });
+                    await supabaseAdmin
+                        .from("debates")
+                        .update({ status: "error", detail: `Aborted after ${totalSkippedTurns} model failures.` })
+                        .eq("id", debateId);
+                    // Send system message to chat
+                    await supabaseAdmin.from("debate_turns").insert({
+                        debate_id: debateId,
+                        model: "system",
+                        turn_index: -1,
+                        content: `Debate aborted after ${totalSkippedTurns} model failures.`,
+                        tokens: 0,
+                        ttft_ms: null,
+                        started_at: new Date().toISOString(),
+                        finished_at: new Date().toISOString(),
+                    });
+                    return { error: true, type: "debate_aborted_max_skips", message: `Debate aborted after ${totalSkippedTurns} model failures.` };
+                }
+            } else {
+                // Regular non-dead errors (don't count toward skip limit)
+                await Log({
+                    level: "warn",
+                    event_type: "turn_processing_issue",
+                    debate_id: debateId,
+                    model: modelName,
+                    turn_id: turnResult.turnId ?? undefined,
+                    message: `Issue processing turn ${actualTurnIndex} (ID: ${turnResult.turnId}) for ${modelName}. Status: ${turnResult.status}, Detail: ${turnResult.message}`,
+                });
+            }
         }
 
         // --- 8. CHECK FOR MOTION TO END DEBATE ---
@@ -951,24 +1015,43 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
             await Promise.race([directStreamProcessor(), timeoutPromise]);
         }
 
-        if (!firstTokenReceived && streamedContent === "") {
+        // Check for various forms of empty/dead responses
+        const cleanedContent = streamedContent.trim();
+        const isEmptyResponse = !firstTokenReceived || 
+                               cleanedContent === "" || 
+                               cleanedContent.length < 5 ||
+                               /^[\s\n\r\t]*$/.test(cleanedContent);
+        
+        // Enhanced dead model detection for better QwQ handling
+        const isLowQualityResponse = cleanedContent.length < MIN_CONTENT_LENGTH || // Very short responses
+                                   /^(.)\1{4,}/.test(cleanedContent) || // Repetitive characters (aaaaa, etc.)
+                                   cleanedContent.split(' ').length < MIN_WORD_COUNT || // Less than required words
+                                   /^[^a-zA-Z]*$/.test(cleanedContent) || // No letters (just symbols/numbers)
+                                   cleanedContent.toLowerCase().includes('i cannot') ||
+                                   cleanedContent.toLowerCase().includes("i can't") ||
+                                   cleanedContent.toLowerCase().includes('sorry, i') ||
+                                   cleanedContent.toLowerCase().includes('i apologize');
+        
+        if (isEmptyResponse || isLowQualityResponse) {
+            const errorType = isEmptyResponse ? "empty" : "low_quality";
             await Log({
                 level: "warn",
-                event_type: "model_empty_response",
+                event_type: `model_${errorType}_response`,
                 debate_id: debateId,
                 model: modelName,
                 turn_id: newTurn.id,
-                message: `Model ${modelName} returned an empty stream for turn ${turnIndex} (ID: ${newTurn.id}).`,
+                message: `Model ${modelName} returned ${errorType} content for turn ${turnIndex} (ID: ${newTurn.id}). Content: "${cleanedContent}"`,
+                detail: `Content length: ${cleanedContent.length}, Words: ${cleanedContent.split(' ').length}`
             });
             await supabaseAdmin
                 .from("debate_turns")
                 .update({
-                    content: "[Model returned empty response]",
+                    content: `[Model returned ${errorType} response: "${cleanedContent}"]`,
                     finished_at: new Date().toISOString(),
                     ttft_ms, 
                 })
                 .eq("id", newTurn.id);
-            return { status: "error", turnId: newTurn.id, message: "Model returned an empty stream." };
+            return { status: "error", turnId: newTurn.id, message: `Model returned ${errorType} content.` };
         }
 
         const finishedAt = new Date().toISOString();
@@ -1573,7 +1656,6 @@ export async function checkForStaleDebates() {
 
                 console.log(`[RESUME SUCCESS] Successfully initiated resume for stale debate ${debate.id}`, {
                     debateId: debate.id,
-                    status: debate.status,
                     timestamp: new Date().toISOString()
                 });
                 resumedDebates.push(debate.id);
