@@ -5,4 +5,4 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export const MESSAGE_LIMIT = 200;
+export const MESSAGE_LIMIT = 100;

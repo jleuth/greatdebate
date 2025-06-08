@@ -94,7 +94,8 @@ export function useRealtimeChat({ roomName, username }: UseRealtimeChatProps) {
   }, []) // Runs once on component mount
 
   useEffect(() => {
-    if (!roomName) return // Do not proceed if roomName is not set
+    if (!roomName || bannedWordsList.length === 0) return // Wait for both roomName and banned words to be ready
+    
     const newChannel = supabase.channel(roomName)
 
     newChannel
@@ -115,7 +116,7 @@ export function useRealtimeChat({ roomName, username }: UseRealtimeChatProps) {
     return () => {
       supabase.removeChannel(newChannel)
     }
-  }, [roomName, bannedWordsList]) // Removed supabase from deps as it's now stable
+  }, [roomName, bannedWordsList]) // Fixed dependency array to include bannedWordsList
 
   const sendMessage = useCallback(
     async (content: string) => {

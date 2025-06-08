@@ -31,11 +31,11 @@ export function usePastAiMessages() {
     setError(null);
 
     try {
-      // Fetch only the most recent turns to avoid huge memory usage
+      // Fetch the most recent turns ordered by created timestamp, not turn_index
       const { data, error: dbError } = await supabase
         .from('debate_turns')
         .select('id, content, model, started_at, finished_at, turn_index')
-        .order('turn_index', { ascending: false })
+        .order('started_at', { ascending: false })
         .limit(MESSAGE_LIMIT);
 
       if (dbError) {
@@ -49,8 +49,7 @@ export function usePastAiMessages() {
           user: { name: turn.model },
           createdAt: turn.started_at || turn.finished_at || new Date().toISOString(),
         }))
-          .sort(sortByCreatedAt)
-          .slice(-MESSAGE_LIMIT);
+          .sort(sortByCreatedAt); // Sort by actual timestamp, not turn_index
 
         setMessages(formattedMessages);
       } else {
