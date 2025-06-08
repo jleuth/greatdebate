@@ -42,11 +42,6 @@ const StatusChatTabs: React.FC<StatusChatTabsProps> = ({
     <Card className="flex flex-col h-full bg-gradient-to-br from-black to-gray-900 border-gray-700 shadow-2xl">
       {/* Tab Headers */}
       <CardHeader className="font-mono text-gray-400 pb-0 border-b border-gray-700 bg-gradient-to-r from-gray-900/50 to-black/50 backdrop-blur-sm flex-shrink-0">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <div className="w-3 h-3 bg-red-400 rounded-full animate-pulse"></div>
-          </div>
-        </div>
         
         <div className="flex space-x-1 p-1 bg-black/30 rounded-lg">
           {tabs.map((tab) => {

@@ -40,24 +40,6 @@ const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
 }) => {
   const isMobile = useIsMobile();
 
-  // Scroll to bottom on page load for debate chat
-  useEffect(() => {
-    const scrollToBottom = () => {
-      // Find the debate chat container and scroll it to bottom
-      const debateChatContainer = document.querySelector('[data-scrollable="true"]');
-      if (debateChatContainer) {
-        debateChatContainer.scrollTo({
-          top: debateChatContainer.scrollHeight,
-          behavior: 'smooth',
-        });
-      }
-    };
-
-    // Small delay to ensure content is loaded
-    const timer = setTimeout(scrollToBottom, 500);
-    return () => clearTimeout(timer);
-  }, []);
-
   if (isMobile) {
     return (
       <MobileLayout 
