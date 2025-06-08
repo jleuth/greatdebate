@@ -45,7 +45,6 @@ const StatusChatTabs: React.FC<StatusChatTabsProps> = ({
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
             <div className="w-3 h-3 bg-red-400 rounded-full animate-pulse"></div>
-            <span className="text-red-400 font-bold tracking-wider">SIDEBAR</span>
           </div>
         </div>
         

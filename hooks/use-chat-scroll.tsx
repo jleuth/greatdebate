@@ -7,9 +7,24 @@ export function useChatScroll() {
     if (!containerRef.current) return
 
     const container = containerRef.current
-    container.scrollTo({
-      top: container.scrollHeight,
-      behavior: 'smooth',
+    
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: 'smooth',
+      })
+    })
+  }, [])
+
+  const scrollToBottomInstant = useCallback(() => {
+    if (!containerRef.current) return
+
+    const container = containerRef.current
+    
+    // Instant scroll without animation - better for initial load
+    requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight
     })
   }, [])
 
@@ -23,12 +38,14 @@ export function useChatScroll() {
     const isNearBottom = scrollHeight - scrollTop - clientHeight < 100
     
     if (isNearBottom) {
-      container.scrollTo({
-        top: container.scrollHeight,
-        behavior: 'smooth',
+      requestAnimationFrame(() => {
+        container.scrollTo({
+          top: container.scrollHeight,
+          behavior: 'smooth',
+        })
       })
     }
   }, [])
 
-  return { containerRef, scrollToBottom, scrollToBottomIfNearBottom }
+  return { containerRef, scrollToBottom, scrollToBottomInstant, scrollToBottomIfNearBottom }
 }

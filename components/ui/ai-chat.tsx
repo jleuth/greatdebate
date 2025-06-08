@@ -21,8 +21,9 @@ interface AiChatDisplayProps {
 export const AiChatDisplay = ({
   messages = []
 }: AiChatDisplayProps) => {
-  const { containerRef, scrollToBottomIfNearBottom } = useChatScroll();
+  const { containerRef, scrollToBottom, scrollToBottomInstant, scrollToBottomIfNearBottom } = useChatScroll();
   const [currentModel, setCurrentModel] = useState<string | null>(null);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   const supabase = useMemo(() => createClient(), []);
 
@@ -74,8 +75,15 @@ export const AiChatDisplay = ({
   }, [messages])
 
   useEffect(() => {
-    scrollToBottomIfNearBottom()
-  }, [allMessages, scrollToBottomIfNearBottom])
+    // On initial load with messages, always scroll to bottom instantly
+    if (isInitialLoad && allMessages.length > 0) {
+      scrollToBottomInstant();
+      setIsInitialLoad(false);
+    } else {
+      // For subsequent updates, only scroll if near bottom
+      scrollToBottomIfNearBottom();
+    }
+  }, [allMessages, scrollToBottomIfNearBottom, scrollToBottomInstant, isInitialLoad])
 
 
   return (
