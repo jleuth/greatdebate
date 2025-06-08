@@ -2,7 +2,8 @@
 
 import { createClient } from '@/lib/supabase/client';
 import { useEffect, useState, useCallback } from 'react';
-import { type ChatMessage } from './use-realtime-chat'; // Reusing the ChatMessage type
+import { type ChatMessage } from './use-realtime-chat';
+import { MESSAGE_LIMIT } from '@/lib/utils';
 
 interface UsePastMessagesProps {
   roomName: string;
@@ -13,7 +14,7 @@ interface PastMessageFromDb {
   content: string;
   user_name: string; // As stored in the DB
   created_at: string;
-  room_name: string;
+  room_name?: string;
 }
 
 export function usePastMessages({ roomName }: UsePastMessagesProps) {
@@ -35,9 +36,10 @@ export function usePastMessages({ roomName }: UsePastMessagesProps) {
     try {
       const { data, error: dbError } = await supabase
         .from('messages')
-        .select('*')
+        .select('id, content, user_name, created_at')
         .eq('room_name', roomName)
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: false })
+        .limit(MESSAGE_LIMIT);
 
       if (dbError) {
         throw dbError;
@@ -49,7 +51,10 @@ export function usePastMessages({ roomName }: UsePastMessagesProps) {
           content: msg.content,
           user: { name: msg.user_name },
           createdAt: msg.created_at,
-        }));
+        }))
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+          .slice(-MESSAGE_LIMIT);
+
         setMessages(formattedMessages);
       } else {
         setMessages([]);

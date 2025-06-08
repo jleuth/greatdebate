@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/client';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { type ChatMessage } from './use-debate-turns'; // Or define your own
+import { type ChatMessage } from './use-debate-turns';
+import { MESSAGE_LIMIT } from '@/lib/utils';
 
 interface DebateTurnFromDb {
   id: string;
@@ -30,24 +31,26 @@ export function usePastAiMessages() {
     setError(null);
 
     try {
-      // Get all turns ordered by turn_index ascending (chronological order)
+      // Fetch only the most recent turns to avoid huge memory usage
       const { data, error: dbError } = await supabase
         .from('debate_turns')
-        .select('*')
-        .order('turn_index', { ascending: true });
+        .select('id, content, model, started_at, finished_at, turn_index')
+        .order('turn_index', { ascending: false })
+        .limit(MESSAGE_LIMIT);
 
       if (dbError) {
         throw dbError;
       }
 
       if (data) {
-        // For now, let's simplify and not filter by ended debates
         const formattedMessages: ChatMessage[] = data.map((turn: DebateTurnFromDb) => ({
           id: turn.id,
           content: turn.content,
-          user: { name: turn.model }, // model name in place of username
+          user: { name: turn.model },
           createdAt: turn.started_at || turn.finished_at || new Date().toISOString(),
-        }));
+        }))
+          .sort(sortByCreatedAt)
+          .slice(-MESSAGE_LIMIT);
 
         setMessages(formattedMessages);
       } else {
@@ -83,7 +86,9 @@ export function usePastAiMessages() {
           };
           setMessages((prev) => {
             if (prev.some((msg) => msg.id === newMessage.id)) return prev; // Avoid duplicates
-            return [...prev, newMessage].sort(sortByCreatedAt);
+            return [...prev, newMessage]
+              .sort(sortByCreatedAt)
+              .slice(-MESSAGE_LIMIT);
           });
         }
       )
@@ -102,14 +107,15 @@ export function usePastAiMessages() {
             const existingMsgIndex = prevMessages.findIndex(msg => msg.id === updatedMessage.id);
 
             if (existingMsgIndex !== -1) {
-              // Message exists, update it immutably
-              const newMessages = [...prevMessages]; // Create a new array
-              newMessages[existingMsgIndex] = updatedMessage; // Replace with the new object
-              return newMessages.sort(sortByCreatedAt);
+              const newMessages = [...prevMessages];
+              newMessages[existingMsgIndex] = updatedMessage;
+              return newMessages
+                .sort(sortByCreatedAt)
+                .slice(-MESSAGE_LIMIT);
             } else {
-              // Message doesn't exist in local state yet, add it
-              // This handles cases where an UPDATE might arrive before the message is fetched/inserted locally
-              return [...prevMessages, updatedMessage].sort(sortByCreatedAt);
+              return [...prevMessages, updatedMessage]
+                .sort(sortByCreatedAt)
+                .slice(-MESSAGE_LIMIT);
             }
           });
         }

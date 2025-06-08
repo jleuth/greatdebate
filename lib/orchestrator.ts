@@ -889,9 +889,11 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
     const FIRST_TOKEN_TIMEOUT_MS = 45 * 1000; // 45 seconds 
     let ttft_ms: number | null = null;
     const turnStartTime = Date.now();
-    let streamedContent = ""; 
-    let tokensCount = 0; 
+    let streamedContent = "";
+    let tokensCount = 0;
     let firstTokenReceived = false;
+    const UPDATE_INTERVAL_MS = 1000; // batch DB updates every second
+    let lastUpdateTime = Date.now();
 
     try {
         // Try streaming first, fallback to direct if it fails
@@ -972,12 +974,16 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
                                             .eq("id", newTurn.id);
                                     }
                                     streamedContent += content;
-                                    
-                                    // Update content in real-time for streaming display
-                                    await supabaseAdmin
-                                        .from("debate_turns")
-                                        .update({ content: streamedContent })
-                                        .eq("id", newTurn.id);
+
+                                    // Throttle DB updates to reduce load under high traffic
+                                    const now = Date.now();
+                                    if (now - lastUpdateTime > UPDATE_INTERVAL_MS) {
+                                        lastUpdateTime = now;
+                                        await supabaseAdmin
+                                            .from("debate_turns")
+                                            .update({ content: streamedContent })
+                                            .eq("id", newTurn.id);
+                                    }
                                 }
                             } catch (parseError) {
                                 // Ignore JSON parse errors for malformed chunks
@@ -1028,6 +1034,16 @@ export async function turnHandler({ debateId, modelName, turnIndex, topic, turns
                             .eq("id", newTurn.id);
                     }
                     streamedContent += chunk;
+
+                    // Throttle DB updates similarly in fallback mode
+                    const now = Date.now();
+                    if (now - lastUpdateTime > UPDATE_INTERVAL_MS) {
+                        lastUpdateTime = now;
+                        await supabaseAdmin
+                            .from("debate_turns")
+                            .update({ content: streamedContent })
+                            .eq("id", newTurn.id);
+                    }
                 }
             };
 

@@ -2,6 +2,9 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { useCallback, useEffect, useState } from 'react'
+import { MESSAGE_LIMIT } from '@/lib/utils'
+
+let cachedBannedWords: string[] | null = null
 
 interface UseRealtimeChatProps {
   roomName: string
@@ -65,24 +68,28 @@ export function useRealtimeChat({ roomName, username }: UseRealtimeChatProps) {
 
   useEffect(() => {
     const fetchBannedWords = async () => {
+      if (cachedBannedWords) {
+        setBannedWordsList(cachedBannedWords)
+        return
+      }
+
       try {
-        const response = await fetch('/bannedwords.csv') // Fetches from the public folder
+        const response = await fetch('/bannedwords.csv')
         if (!response.ok) {
           throw new Error(`Failed to fetch banned_words.csv: ${response.statusText}`)
         }
         const text = await response.text()
         const words = text
-          .split(/\r?\n/) // Split by new line, handling Windows and Unix line endings
-          .map((word) => word.trim().toLowerCase()) // Trim and convert to lowercase
-          .filter((word) => word.length > 0) // Remove empty lines
+          .split(/\r?\n/)
+          .map((word) => word.trim().toLowerCase())
+          .filter((word) => word.length > 0)
+        cachedBannedWords = words
         setBannedWordsList(words)
-        // console.log("Banned words loaded:", words);
       } catch (error) {
         console.error('Error loading banned words list:', error)
-        // Optionally, set a default small list or handle the error appropriately
-        // setBannedWordsList(['defaultbadword']);
       }
     }
+
     fetchBannedWords()
   }, []) // Runs once on component mount
 
@@ -95,7 +102,7 @@ export function useRealtimeChat({ roomName, username }: UseRealtimeChatProps) {
         const receivedMessage = payload.payload as ChatMessage
         // Sanitize incoming messages using the fetched list
         const finalMessage = { ...receivedMessage, content: sanitizeContent(receivedMessage.content, bannedWordsList) }
-        setMessages((current) => [...current, finalMessage])
+        setMessages((current) => [...current, finalMessage].slice(-MESSAGE_LIMIT))
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
@@ -129,7 +136,7 @@ export function useRealtimeChat({ roomName, username }: UseRealtimeChatProps) {
         createdAt: new Date().toISOString(),
       }
 
-      setMessages((current) => [...current, message])
+      setMessages((current) => [...current, message].slice(-MESSAGE_LIMIT))
 
       await channel.send({
         type: 'broadcast',
