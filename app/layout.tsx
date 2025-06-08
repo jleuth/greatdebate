@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Instrument_Serif, Karla } from "next/font/google";
 import "./globals.css";
+import { Analytics } from "@vercel/analytics/next";
 
 const instrumentSerif = Instrument_Serif({
   variable: "--font-instrument-serif",
@@ -38,6 +39,7 @@ export default function RootLayout({
         className={`${ibmPlexMono.variable} ${karla.variable} ${instrumentSerif.variable} antialiased`}
       >
         {children}
+        <Analytics />
       </body>
     </html>
   );

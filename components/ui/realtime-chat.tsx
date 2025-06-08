@@ -33,7 +33,7 @@ export const RealtimeChat = ({
   onMessage,
   messages: initialMessages = [],
 }: RealtimeChatProps) => {
-  const { containerRef, scrollToBottom } = useChatScroll();
+  const { containerRef, scrollToBottomIfNearBottom } = useChatScroll();
 
   const {
     messages: realtimeMessages,
@@ -66,9 +66,9 @@ export const RealtimeChat = ({
   }, [allMessages, onMessage])
 
   useEffect(() => {
-    // Scroll to bottom whenever messages change
-    scrollToBottom()
-  }, [allMessages, scrollToBottom])
+    // Scroll to bottom only if user is near bottom
+    scrollToBottomIfNearBottom()
+  }, [allMessages, scrollToBottomIfNearBottom])
 
   const handleSendMessage = useCallback(
     (e: React.FormEvent) => {
