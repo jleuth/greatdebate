@@ -8,6 +8,9 @@ const MIN_CONTENT_LENGTH = 10; // Minimum characters for valid response
 const MIN_WORD_COUNT = 3; // Minimum words for valid response
 const MAX_REPETITIVE_CHARS = 4; // Max consecutive identical characters (aaaaa = 5 chars, so 4+ triggers)
 
+// Motion to end debate thresholds - configurable for tuning
+const MIN_TURNS_BEFORE_MOTION = 10; // Minimum turns before motion to end debate is allowed
+
 type StartDebateParams = {
     topic: string;
     models: string[];
@@ -66,6 +69,23 @@ async function checkMotionToEndDebate(debateId: string, models: string[]): Promi
         }
 
         if (!recentTurns || recentTurns.length === 0) {
+            return { shouldEnd: false, motionCount: 0 };
+        }
+
+        // Check if we have reached the minimum turns threshold
+        const totalNonSystemTurns = recentTurns.length;
+        if (totalNonSystemTurns < MIN_TURNS_BEFORE_MOTION) {
+            await Log({
+                level: "info",
+                event_type: "motion_check_too_early",
+                debate_id: debateId,
+                message: `Motion to end debate blocked: only ${totalNonSystemTurns}/${MIN_TURNS_BEFORE_MOTION} minimum turns completed`,
+                detail: JSON.stringify({
+                    currentTurns: totalNonSystemTurns,
+                    minimumRequired: MIN_TURNS_BEFORE_MOTION,
+                    turnsRemaining: MIN_TURNS_BEFORE_MOTION - totalNonSystemTurns
+                })
+            });
             return { shouldEnd: false, motionCount: 0 };
         }
 
