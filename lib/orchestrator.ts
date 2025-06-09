@@ -109,27 +109,40 @@ async function checkMotionToEndDebate(debateId: string, models: string[]): Promi
             modelStatusDetails.push(modelStatus);
         }
 
-        // STRICT REQUIREMENT: ALL models that have made valid turns must have motioned
-        // AND we must have at least majority of models with valid turns (to prevent single model from ending debate)
-        const minimumModelsRequired = Math.ceil(models.length / 2); // At least half the models
-        const allActiveModelsMotioned = modelsWithValidTurns >= minimumModelsRequired && motionCount === modelsWithValidTurns;
+        // HOTFIX: Changed from requiring ALL active models to requiring MAJORITY
+        // Support 3/4 models motioning, or 2/4 if others aren't responding (majority of active models)
+        const minimumModelsRequired = Math.ceil(models.length / 2); // At least half the models (2/4)
+        const majorityOfTotal = Math.ceil(models.length * 0.75); // 75% of total models (3/4)
+        
+        // Two conditions for ending debate:
+        // 1. At least 3 out of 4 models have motioned (75% threshold)
+        // 2. OR at least 2 out of 4 models have motioned AND they represent majority of active models
+        const hasSuperMajority = motionCount >= majorityOfTotal; // 3+ models motioned
+        const hasMajorityOfActive = modelsWithValidTurns >= minimumModelsRequired && 
+                                   motionCount >= Math.ceil(modelsWithValidTurns / 2) && 
+                                   motionCount >= minimumModelsRequired; // At least 2 models motioned and they're majority of active
+        
+        const shouldEndDebate = hasSuperMajority || hasMajorityOfActive;
         
         await Log({
             level: "info",
             event_type: "motion_check_result",
             debate_id: debateId,
-            message: `Motion check: ${motionCount}/${modelsWithValidTurns} active models have motioned (need ALL active models to motion, min ${minimumModelsRequired} active)`,
+            message: `Motion check: ${motionCount}/${modelsWithValidTurns} active models have motioned (need 3/4 total OR majority of active with min 2)`,
             detail: JSON.stringify({
                 motionCount,
                 modelsWithValidTurns,
                 totalModels: models.length,
                 minimumModelsRequired,
-                allActiveModelsMotioned,
+                majorityOfTotal,
+                hasSuperMajority,
+                hasMajorityOfActive,
+                shouldEndDebate,
                 modelStatuses: modelStatusDetails
             })
         });
         
-        const shouldEnd = allActiveModelsMotioned;
+        const shouldEnd = shouldEndDebate;
         
         return { shouldEnd, motionCount };
 
