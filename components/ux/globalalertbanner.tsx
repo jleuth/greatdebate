@@ -10,7 +10,7 @@ const GlobalAlertBanner: React.FC<GlobalAlertBannerProps> = ({ alert }) => {
     if (!alert) return null;
 
     return (
-        <Card className="bg-yellow-500 text-white w-xs">
+        <Card className="bg-yellow-500 text-white">
             <CardContent>
                 <CardTitle className="text-lg font-bold flex items-center gap-3 font-mono"> <Info/> {alert}</CardTitle>
             </CardContent>
